@@ -10,7 +10,7 @@
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
-<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
 <style>
   html, body, #root { height: 100%; margin: 0; }
@@ -106,11 +106,11 @@ function Printer(p) { return <Icon {...p}><rect x="6" y="9" width="12" height="7
 /* ---------------------------------------------------------------------- */
 
 const STATUS = {
-  READY: { label: "READY", bg: "bg-emerald-500", text: "text-emerald-400", ring: "ring-emerald-500/30", soft: "bg-emerald-500/10" },
-  READY_NOTE: { label: "READY WITH NOTE", bg: "bg-amber-400", text: "text-amber-300", ring: "ring-amber-400/30", soft: "bg-amber-400/10" },
-  MAINTENANCE: { label: "MAINTENANCE", bg: "bg-blue-400", text: "text-blue-300", ring: "ring-blue-400/30", soft: "bg-blue-400/10" },
-  BREAKDOWN: { label: "BREAKDOWN", bg: "bg-red-500", text: "text-red-400", ring: "ring-red-500/30", soft: "bg-red-500/10" },
-  OUT_OF_SERVICE: { label: "OUT OF SERVICE", bg: "bg-zinc-400", text: "text-zinc-400", ring: "ring-zinc-400/30", soft: "bg-zinc-400/10" },
+  READY: { label: "READY", bg: "bg-emerald-500", text: "text-emerald-400", ring: "ring-emerald-500/30", soft: "bg-emerald-500/10", border: "border-emerald-500/50" },
+  READY_NOTE: { label: "READY WITH NOTE", bg: "bg-amber-400", text: "text-amber-300", ring: "ring-amber-400/30", soft: "bg-amber-400/10", border: "border-amber-400/50" },
+  MAINTENANCE: { label: "MAINTENANCE", bg: "bg-blue-400", text: "text-blue-300", ring: "ring-blue-400/30", soft: "bg-blue-400/10", border: "border-blue-400/50" },
+  BREAKDOWN: { label: "BREAKDOWN", bg: "bg-red-500", text: "text-red-400", ring: "ring-red-500/30", soft: "bg-red-500/10", border: "border-red-500/50" },
+  OUT_OF_SERVICE: { label: "OUT OF SERVICE", bg: "bg-zinc-400", text: "text-zinc-400", ring: "ring-zinc-400/30", soft: "bg-zinc-400/10", border: "border-zinc-400/50" },
 };
 
 // Section 5 — User Roles & Access Control
@@ -152,6 +152,7 @@ const STORAGE_KEYS = {
   users: "erct5:users",
   shifts: "erct5:shifts",
   subAreas: "erct5:subareas",
+  session: "erct5:session",
 };
 
 /* ---------------------------------------------------------------------- */
@@ -775,13 +776,13 @@ function Info({ label, value, warn }) {
 function Modal({ title, onClose, children, wide }) {
   return (
     <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/70" onClick={onClose} />
-      <div className={`relative w-full ${wide ? "max-w-2xl" : "max-w-md"} bg-slate-950 border border-slate-800 rounded-xl shadow-2xl max-h-[90vh] overflow-y-auto`}>
-        <div className="sticky top-0 bg-slate-950 border-b border-slate-800 px-4 py-3 flex items-center justify-between">
+      <div className="absolute inset-0 bg-black/70 backdrop-blur-sm" onClick={onClose} />
+      <div className={`relative w-full ${wide ? "max-w-2xl" : "max-w-md"} bg-slate-950 border border-slate-800 rounded-2xl shadow-2xl shadow-black/50 max-h-[90vh] overflow-y-auto`}>
+        <div className="sticky top-0 bg-slate-950/95 backdrop-blur border-b border-slate-800 px-5 py-3.5 flex items-center justify-between">
           <h3 className="text-sm font-semibold text-slate-100">{title}</h3>
-          <button onClick={onClose} className="text-slate-500 hover:text-slate-200"><X size={18} /></button>
+          <button onClick={onClose} className="text-slate-500 hover:text-slate-200 transition-colors"><X size={18} /></button>
         </div>
-        <div className="p-4">{children}</div>
+        <div className="p-5">{children}</div>
       </div>
     </div>
   );
@@ -810,6 +811,8 @@ function App() {
   const [now, setNow] = useState(Date.now());
   const [sessionOpen, setSessionOpen] = useState(false);
   const [mobileNavOpen, setMobileNavOpen] = useState(false);
+  const [currentUser, setCurrentUser] = useState(null);
+  const [authChecked, setAuthChecked] = useState(false);
 
   const [selectedId, setSelectedId] = useState(null);
   const [updateModalEq, setUpdateModalEq] = useState(null);
@@ -847,9 +850,36 @@ function App() {
       setUsers(usrs);
       setShifts(shf);
       setSubAreas(subs);
+
+      // restore a previous login session, if the matching user still exists
+      const savedSession = await loadKey(STORAGE_KEYS.session, null);
+      if (savedSession) {
+        const stillValid = usrs.find((u) => u.id === savedSession.userId);
+        if (stillValid) {
+          setCurrentUser(stillValid);
+          setRole(stillValid.role);
+          setAssignedAreas(stillValid.areas.length ? stillValid.areas : [AREAS[0].code]);
+          setTab(ROLES[stillValid.role].home);
+        }
+      }
+      setAuthChecked(true);
       setLoading(false);
     })();
   }, []);
+
+  function handleLogin(user) {
+    setCurrentUser(user);
+    setRole(user.role);
+    setAssignedAreas(user.areas.length ? user.areas : [AREAS[0].code]);
+    setTab(ROLES[user.role].home);
+    saveKey(STORAGE_KEYS.session, { userId: user.id });
+  }
+
+  function handleLogout() {
+    setCurrentUser(null);
+    setSessionOpen(false);
+    saveKey(STORAGE_KEYS.session, null);
+  }
 
   const persistEquipment = useCallback((next) => { setEquipment(next); saveKey(STORAGE_KEYS.equipment, next); }, []);
   const persistIncidents = useCallback((next) => { setIncidents(next); saveKey(STORAGE_KEYS.incidents, next); }, []);
@@ -1012,13 +1042,17 @@ function App() {
     </div>;
   }
 
+  if (!currentUser) {
+    return <LoginScreen users={users} onLogin={handleLogin} />;
+  }
+
   return (
     <div className="h-screen w-full bg-slate-950 text-slate-200 flex flex-col overflow-hidden" style={{ fontFamily: "Inter, ui-sans-serif, system-ui" }}>
       <ProtoBanner />
       <TopBar
         role={role} switchRole={switchRole} now={now} readiness={readiness} needCount={needAttention.length}
         assignedAreas={assignedAreas} setAssignedAreas={setAssignedAreas} sessionOpen={sessionOpen} setSessionOpen={setSessionOpen}
-        mobileNavOpen={mobileNavOpen} setMobileNavOpen={setMobileNavOpen}
+        mobileNavOpen={mobileNavOpen} setMobileNavOpen={setMobileNavOpen} currentUser={currentUser} onLogout={handleLogout}
       />
       <div className="flex-1 flex overflow-hidden">
         <SideNav tab={tab} setTab={setTab} needCount={needAttention.length} role={role} onHandover={() => setHandoverOpen(true)}
@@ -1110,60 +1144,148 @@ function ProtoBanner() {
 /* Top bar + session simulator                                             */
 /* ---------------------------------------------------------------------- */
 
-function TopBar({ role, switchRole, now, readiness, needCount, assignedAreas, setAssignedAreas, sessionOpen, setSessionOpen, mobileNavOpen, setMobileNavOpen }) {
+function initials(name) {
+  return (name || "?").split(" ").filter(Boolean).slice(0, 2).map((w) => w[0]).join("").toUpperCase();
+}
+
+function LoginScreen({ users, onLogin }) {
+  const [username, setUsername] = useState("");
+  const [password, setPassword] = useState("");
+  const [error, setError] = useState("");
+  const [showDemo, setShowDemo] = useState(false);
+  const [busy, setBusy] = useState(false);
+
+  function submit(e) {
+    e.preventDefault();
+    setBusy(true);
+    setTimeout(() => {
+      const match = users.find((u) => u.username && u.username.toLowerCase() === username.trim().toLowerCase());
+      if (!match || match.tempPassword !== password) {
+        setError("Username atau password salah.");
+        setBusy(false);
+        return;
+      }
+      setError("");
+      setBusy(false);
+      onLogin(match);
+    }, 300);
+  }
+
+  function pickDemo(u) {
+    setUsername(u.username);
+    setPassword(u.tempPassword);
+    setError("");
+    setShowDemo(false);
+  }
+
+  const demoGroups = [
+    ["System Admin", users.find((u) => u.role === "SYSTEM_ADMIN")],
+    ["Management", users.find((u) => u.role === "MANAGEMENT_VIEWER")],
+    ["Area Admin (contoh)", users.find((u) => u.role === "AREA_ADMIN")],
+  ].filter(([, u]) => u);
+
+  return (
+    <div className="h-screen w-full flex items-center justify-center bg-slate-950 relative overflow-hidden px-4" style={{ fontFamily: "Inter, ui-sans-serif, system-ui" }}>
+      <div className="pointer-events-none absolute -top-40 -left-40 h-96 w-96 rounded-full bg-cyan-500/10 blur-3xl" />
+      <div className="pointer-events-none absolute -bottom-40 -right-40 h-96 w-96 rounded-full bg-emerald-500/10 blur-3xl" />
+
+      <div className="relative w-full max-w-sm">
+        <div className="flex flex-col items-center mb-7">
+          <div className="h-14 w-14 rounded-2xl bg-gradient-to-br from-cyan-400 to-cyan-600 flex items-center justify-center shadow-lg shadow-cyan-500/20 mb-4">
+            <Radio size={26} className="text-slate-950" />
+          </div>
+          <h1 className="text-xl font-semibold text-slate-50 text-center">Equipment Readiness<br/>Control Tower</h1>
+          <p className="text-xs text-slate-500 font-mono mt-1.5">IPC TPK · Multi-Area · PRD v2.1</p>
+        </div>
+
+        <form onSubmit={submit} className="bg-slate-900/70 border border-slate-800 rounded-2xl shadow-2xl shadow-black/40 p-6 space-y-4 backdrop-blur">
+          <div>
+            <label className="text-[11px] text-slate-400 uppercase tracking-wide font-medium">Username</label>
+            <input autoFocus value={username} onChange={(e) => setUsername(e.target.value)} placeholder="mis. ZN1_admin1"
+              className="w-full mt-1.5 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-slate-100 placeholder-slate-600 font-mono focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500/50 transition-colors" />
+          </div>
+          <div>
+            <label className="text-[11px] text-slate-400 uppercase tracking-wide font-medium">Password</label>
+            <input type="password" value={password} onChange={(e) => setPassword(e.target.value)} placeholder="••••••••"
+              className="w-full mt-1.5 bg-slate-950 border border-slate-700 rounded-lg px-3 py-2.5 text-sm text-slate-100 placeholder-slate-600 font-mono focus:outline-none focus:ring-2 focus:ring-cyan-500/50 focus:border-cyan-500/50 transition-colors" />
+          </div>
+          {error && <div className="text-xs text-red-400 bg-red-500/10 ring-1 ring-red-500/30 rounded-lg px-3 py-2">{error}</div>}
+          <button type="submit" disabled={!username || !password || busy}
+            className="w-full bg-gradient-to-r from-cyan-500 to-cyan-400 hover:from-cyan-400 hover:to-cyan-300 disabled:opacity-40 disabled:cursor-not-allowed text-slate-950 font-semibold rounded-lg py-2.5 text-sm transition-all shadow-lg shadow-cyan-500/10">
+            {busy ? "Signing in…" : "Sign In"}
+          </button>
+
+          <div className="pt-1">
+            <button type="button" onClick={() => setShowDemo((s) => !s)} className="text-[11px] text-cyan-400/80 hover:text-cyan-300 flex items-center gap-1 mx-auto">
+              <InfoIcon size={12} /> {showDemo ? "Sembunyikan akun demo" : "Lihat akun demo (pilot)"}
+            </button>
+            {showDemo && (
+              <div className="mt-2.5 space-y-1.5">
+                {demoGroups.map(([label, u]) => (
+                  <button key={u.id} type="button" onClick={() => pickDemo(u)}
+                    className="w-full flex items-center justify-between text-left bg-slate-950/60 border border-slate-800 rounded-lg px-3 py-2 hover:border-cyan-500/40 transition-colors">
+                    <span className="text-[11px] text-slate-300">{label}</span>
+                    <span className="text-[10.5px] font-mono text-slate-500">{u.username}</span>
+                  </button>
+                ))}
+                <p className="text-[10px] text-slate-600 leading-snug pt-1">Password sementara ada di Administration → Users. Kredensial demo ini tersimpan lokal di browser, bukan sistem auth produksi.</p>
+              </div>
+            )}
+          </div>
+        </form>
+
+        <p className="text-[10.5px] text-slate-600 text-center mt-5 leading-snug">
+          Prototype pilot — autentikasi berjalan di browser terhadap User Master lokal, belum tersambung ke backend/SSO sungguhan.
+        </p>
+      </div>
+    </div>
+  );
+}
+
+function TopBar({ role, now, readiness, needCount, sessionOpen, setSessionOpen, mobileNavOpen, setMobileNavOpen, currentUser, onLogout }) {
   const d = new Date(now);
   const time = `${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
-  const toggleArea = (code) => {
-    setAssignedAreas((prev) => prev.includes(code) ? (prev.length > 1 ? prev.filter((c) => c !== code) : prev) : [...prev, code]);
-  };
   return (
-    <header className="print:hidden h-14 shrink-0 border-b border-slate-800 bg-slate-950/95 backdrop-blur flex items-center px-3 sm:px-4 gap-3 relative">
+    <header className="print:hidden h-16 shrink-0 border-b border-slate-800/80 bg-slate-950/95 backdrop-blur flex items-center px-3 sm:px-5 gap-3 relative">
       <button className="lg:hidden text-slate-400" onClick={() => setMobileNavOpen((o) => !o)}><Menu size={20} /></button>
-      <div className="flex items-center gap-2 min-w-0">
-        <div className="h-7 w-7 rounded bg-cyan-500/10 ring-1 ring-cyan-500/30 flex items-center justify-center shrink-0"><Radio size={15} className="text-cyan-400" /></div>
+      <div className="flex items-center gap-2.5 min-w-0">
+        <div className="h-9 w-9 rounded-xl bg-gradient-to-br from-cyan-400 to-cyan-600 flex items-center justify-center shrink-0 shadow-md shadow-cyan-500/20"><Radio size={17} className="text-slate-950" /></div>
         <div className="leading-tight min-w-0">
-          <div className="text-[13px] font-semibold text-slate-100 tracking-tight truncate">Equipment Readiness Control Tower</div>
+          <div className="text-[13.5px] font-semibold text-slate-100 tracking-tight truncate">Equipment Readiness Control Tower</div>
           <div className="text-[10.5px] text-slate-500 font-mono truncate">IPC TPK · Multi-Area · PRD v2.1</div>
         </div>
       </div>
 
-      <div className="ml-auto flex items-center gap-2 sm:gap-3">
+      <div className="ml-auto flex items-center gap-2 sm:gap-2.5">
         {needCount > 0 && (
-          <div className="hidden sm:flex items-center gap-1.5 text-red-400 text-xs font-mono bg-red-500/10 ring-1 ring-red-500/30 rounded-md px-2 py-1">
+          <div className="hidden sm:flex items-center gap-1.5 text-red-300 text-xs font-mono bg-red-500/10 ring-1 ring-red-500/30 rounded-full px-2.5 py-1">
             <AlertTriangle size={13} className="animate-pulse" /> {needCount}
           </div>
         )}
-        <div className="hidden md:flex items-center gap-1.5 text-emerald-400 text-xs font-mono bg-emerald-500/10 ring-1 ring-emerald-500/30 rounded-md px-2 py-1">
+        <div className="hidden md:flex items-center gap-1.5 text-emerald-300 text-xs font-mono bg-emerald-500/10 ring-1 ring-emerald-500/30 rounded-full px-2.5 py-1">
           <CheckCircle2 size={13} /> {readiness}%
         </div>
-        <div className="text-slate-400 text-xs font-mono hidden sm:block">{time}</div>
-        <button onClick={() => setSessionOpen((o) => !o)} className="flex items-center gap-1.5 bg-slate-900 border border-slate-700 text-slate-200 text-xs rounded-md px-2 py-1.5">
-          <UserCircle2 size={14} className="text-cyan-400" /> {ROLES[role].label}
+        <div className="text-slate-500 text-xs font-mono hidden sm:block tabular-nums">{time}</div>
+        <button onClick={() => setSessionOpen((o) => !o)} className="flex items-center gap-2 bg-slate-900 hover:bg-slate-800 border border-slate-700 text-slate-200 text-xs rounded-full pl-1.5 pr-3 py-1.5 transition-colors">
+          <span className="h-6 w-6 rounded-full bg-cyan-500/20 text-cyan-300 text-[10px] font-semibold flex items-center justify-center">{initials(currentUser?.name)}</span>
+          <span className="hidden sm:inline max-w-[120px] truncate">{currentUser?.name}</span>
         </button>
       </div>
 
       {sessionOpen && (
-        <div className="absolute top-14 right-3 sm:right-4 z-30 w-72 bg-slate-900 border border-slate-700 rounded-lg shadow-xl p-3 space-y-3">
-          <div>
-            <div className="text-[10px] text-slate-500 uppercase tracking-wide mb-1">Simulated Role</div>
-            <select value={role} onChange={(e) => switchRole(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-md px-2 py-1.5 text-xs text-slate-200">
-              {Object.entries(ROLES).map(([k, r]) => <option key={k} value={k}>{r.label}</option>)}
-            </select>
-          </div>
-          {ROLES[role].scoped && (
-            <div>
-              <div className="text-[10px] text-slate-500 uppercase tracking-wide mb-1">Assigned Area(s)</div>
-              <div className="max-h-40 overflow-y-auto space-y-1 pr-1">
-                {AREAS.map((a) => (
-                  <label key={a.code} className="flex items-center gap-2 text-xs text-slate-300">
-                    <input type="checkbox" checked={assignedAreas.includes(a.code)} onChange={() => toggleArea(a.code)} className="accent-cyan-500" />
-                    {a.name} <span className="text-slate-600 font-mono">({a.code})</span>
-                  </label>
-                ))}
-              </div>
+        <div className="absolute top-16 right-3 sm:right-5 z-30 w-72 bg-slate-900 border border-slate-700 rounded-xl shadow-2xl shadow-black/40 p-4 space-y-3">
+          <div className="flex items-center gap-3">
+            <span className="h-10 w-10 rounded-full bg-cyan-500/20 text-cyan-300 text-sm font-semibold flex items-center justify-center shrink-0">{initials(currentUser?.name)}</span>
+            <div className="min-w-0">
+              <div className="text-sm text-slate-100 truncate">{currentUser?.name}</div>
+              <div className="text-[10.5px] text-slate-500 font-mono truncate">@{currentUser?.username}</div>
             </div>
-          )}
-          <div className="text-[10.5px] text-slate-500 leading-snug border-t border-slate-800 pt-2">Simulates PRD §5 User-Area Assignment. Real deployment: enforced server-side, not switchable by the user.</div>
+          </div>
+          <div className="text-xs text-slate-400 space-y-1 border-t border-slate-800 pt-2.5">
+            <div className="flex justify-between"><span className="text-slate-500">Role</span><span className="text-slate-200">{ROLES[role].label}</span></div>
+            <div className="flex justify-between gap-3"><span className="text-slate-500 shrink-0">Areas</span><span className="text-slate-200 text-right font-mono text-[10.5px]">{currentUser?.areas?.length === AREAS.length ? "All areas" : currentUser?.areas?.join(", ")}</span></div>
+          </div>
+          <button onClick={onLogout} className="w-full text-xs text-red-300 bg-red-500/10 hover:bg-red-500/20 ring-1 ring-red-500/30 rounded-lg py-2 transition-colors">Log out</button>
         </div>
       )}
     </header>
@@ -1196,7 +1318,7 @@ function SideNav({ tab, setTab, needCount, role, onHandover, mobileNavOpen, setM
         const active = tab === it.key;
         return (
           <button key={it.key} onClick={() => { setTab(it.key); setMobileNavOpen(false); }}
-            className={`flex items-center gap-2.5 mx-2 px-2.5 py-2 rounded-lg text-sm transition-colors ${active ? "bg-cyan-500/10 text-cyan-300 ring-1 ring-cyan-500/30" : "text-slate-400 hover:bg-slate-900 hover:text-slate-200"}`}>
+            className={`flex items-center gap-2.5 mx-2 px-3 py-2.5 rounded-xl text-sm transition-all duration-150 ${active ? "bg-cyan-500/10 text-cyan-300 ring-1 ring-cyan-500/30 shadow-sm shadow-cyan-500/10" : "text-slate-400 hover:bg-slate-900 hover:text-slate-200"}`}>
             <Icon size={16} /><span>{it.label}</span>
             {it.key === "tower" && needCount > 0 && <span className="ml-auto text-[10px] font-mono bg-red-500 text-white rounded-full px-1.5">{needCount}</span>}
           </button>
@@ -1234,22 +1356,25 @@ function SideNav({ tab, setTab, needCount, role, onHandover, mobileNavOpen, setM
 
 function MyAreaHome({ counts, readiness, needAttention, assignedAreas, onOpenEq, equipment, onUpdate, canEdit }) {
   return (
-    <div className="p-4 sm:p-5 space-y-5">
+    <div className="p-4 sm:p-6 space-y-6 max-w-[1400px] mx-auto">
       <div>
-        <h1 className="text-base font-semibold text-slate-100">My Area Overview</h1>
-        <p className="text-xs text-slate-500 font-mono">{assignedAreas.map(areaName).join(" · ")}</p>
+        <h1 className="text-lg font-semibold text-slate-100 tracking-tight">My Area Overview</h1>
+        <p className="text-xs text-slate-500 font-mono mt-0.5">{assignedAreas.map(areaName).join(" · ")}</p>
       </div>
 
-      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2">
-        {[["READY","Ready"],["READY_NOTE","Note"],["MAINTENANCE","Maint."],["BREAKDOWN","Breakdown"],["OUT_OF_SERVICE","OOS"]].map(([k,l]) => (
-          <div key={k} className="rounded-lg bg-slate-900/60 border border-slate-800 p-3">
-            <div className="flex items-center gap-1.5 mb-1"><StatusDot status={k} pulse={k==="BREAKDOWN" && counts[k]>0} /><span className="text-[10.5px] text-slate-400 uppercase">{l}</span></div>
-            <div className="text-lg font-mono font-semibold text-slate-100">{counts[k]}</div>
-          </div>
-        ))}
-        <div className="rounded-lg bg-emerald-500/10 border border-emerald-500/20 p-3">
-          <div className="text-[10.5px] text-emerald-400 uppercase mb-1">Readiness</div>
-          <div className="text-lg font-mono font-semibold text-emerald-300">{readiness}%</div>
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2.5">
+        {[["READY","Ready"],["READY_NOTE","Note"],["MAINTENANCE","Maint."],["BREAKDOWN","Breakdown"],["OUT_OF_SERVICE","OOS"]].map(([k,l]) => {
+          const s = STATUS[k];
+          return (
+            <div key={k} className={`rounded-xl bg-slate-900/60 border-l-4 ${s.border} border-y border-r border-slate-800 p-3 hover:bg-slate-900 transition-colors`}>
+              <div className="flex items-center gap-1.5 mb-1.5"><StatusDot status={k} pulse={k==="BREAKDOWN" && counts[k]>0} /><span className="text-[10.5px] text-slate-400 uppercase tracking-wide">{l}</span></div>
+              <div className="text-xl font-semibold text-slate-100 tabular-nums">{counts[k]}</div>
+            </div>
+          );
+        })}
+        <div className="rounded-xl bg-emerald-500/10 border-l-4 border-emerald-500/60 border-y border-r border-emerald-500/20 p-3">
+          <div className="text-[10.5px] text-emerald-400 uppercase mb-1.5 tracking-wide">Readiness</div>
+          <div className="text-xl font-semibold text-emerald-300 tabular-nums">{readiness}%</div>
         </div>
       </div>
 
@@ -1295,40 +1420,43 @@ function MyAreaHome({ counts, readiness, needAttention, assignedAreas, onOpenEq,
 function ControlTower({ counts, readiness, needAttention, onOpenEq, now, areaMatrix, showAreaMatrix }) {
   const cards = [["READY","Ready"],["READY_NOTE","Ready w/ Note"],["MAINTENANCE","Maintenance"],["BREAKDOWN","Breakdown"],["OUT_OF_SERVICE","Out of Service"]];
   return (
-    <div className="p-4 sm:p-5 space-y-5">
-      <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center gap-4">
+    <div className="p-4 sm:p-6 space-y-6 max-w-[1400px] mx-auto">
+      <div className="rounded-2xl border border-slate-800 bg-gradient-to-br from-slate-900 to-slate-900/40 shadow-lg shadow-black/20 p-5 sm:p-6 flex flex-col sm:flex-row sm:items-center gap-5">
         <div className="flex items-center gap-4">
           <ReadinessRing pct={readiness} />
           <div>
-            <div className="text-3xl font-mono font-semibold text-slate-50">{readiness}%</div>
-            <div className="text-xs text-slate-400">National / Scoped Readiness</div>
+            <div className="text-4xl font-semibold text-slate-50 tracking-tight">{readiness}%</div>
+            <div className="text-xs text-slate-400 mt-0.5">National / Scoped Readiness</div>
           </div>
         </div>
-        <div className="flex-1 grid grid-cols-2 sm:grid-cols-5 gap-2">
-          {cards.map(([k,l]) => (
-            <div key={k} className="rounded-lg bg-slate-950/60 border border-slate-800 p-2.5">
-              <div className="flex items-center gap-1.5 mb-1"><StatusDot status={k} pulse={k==="BREAKDOWN" && counts[k]>0} /><span className="text-[10px] text-slate-400 uppercase">{l}</span></div>
-              <div className="text-lg font-mono font-semibold text-slate-100">{counts[k]}</div>
-            </div>
-          ))}
+        <div className="flex-1 grid grid-cols-2 sm:grid-cols-5 gap-2.5">
+          {cards.map(([k,l]) => {
+            const s = STATUS[k];
+            return (
+              <div key={k} className={`rounded-xl bg-slate-950/50 border-l-4 ${s.border} border-y border-r border-slate-800 p-3 hover:bg-slate-900/70 transition-colors`}>
+                <div className="flex items-center gap-1.5 mb-1.5"><StatusDot status={k} pulse={k==="BREAKDOWN" && counts[k]>0} /><span className="text-[10px] text-slate-400 uppercase tracking-wide">{l}</span></div>
+                <div className="text-2xl font-semibold text-slate-100 tabular-nums">{counts[k]}</div>
+              </div>
+            );
+          })}
         </div>
       </div>
 
       {showAreaMatrix && (
-        <div className="rounded-xl border border-slate-800 bg-slate-900/60">
-          <div className="flex items-center gap-2 px-4 py-3 border-b border-slate-800"><Building2 size={15} className="text-cyan-400" /><h2 className="text-sm font-semibold text-slate-100">Area Matrix</h2></div>
+        <div className="rounded-2xl border border-slate-800 bg-slate-900/60 shadow-lg shadow-black/10 overflow-hidden">
+          <div className="flex items-center gap-2 px-5 py-3.5 border-b border-slate-800"><Building2 size={16} className="text-cyan-400" /><h2 className="text-sm font-semibold text-slate-100">Area Matrix</h2></div>
           <div className="overflow-x-auto">
             <table className="w-full text-xs">
-              <thead><tr className="bg-slate-950/50 text-slate-500 uppercase text-[10px]"><th className="text-left px-3 py-2">Area</th><th className="text-left px-3 py-2">Code</th><th className="text-right px-3 py-2">Total</th><th className="text-right px-3 py-2">Ready</th><th className="text-right px-3 py-2">Breakdown</th><th className="text-right px-3 py-2">Readiness</th></tr></thead>
-              <tbody className="divide-y divide-slate-800">
+              <thead><tr className="bg-slate-950/50 text-slate-500 uppercase text-[10px]"><th className="text-left px-4 py-2.5">Area</th><th className="text-left px-4 py-2.5">Code</th><th className="text-right px-4 py-2.5">Total</th><th className="text-right px-4 py-2.5">Ready</th><th className="text-right px-4 py-2.5">Breakdown</th><th className="text-right px-4 py-2.5">Readiness</th></tr></thead>
+              <tbody className="divide-y divide-slate-800/70">
                 {areaMatrix.map((a) => (
-                  <tr key={a.code} className="hover:bg-slate-800/30">
-                    <td className="px-3 py-2 text-slate-200">{a.name}</td>
-                    <td className="px-3 py-2 font-mono text-slate-500">{a.code}</td>
-                    <td className="px-3 py-2 text-right font-mono text-slate-300">{a.total}</td>
-                    <td className="px-3 py-2 text-right font-mono text-emerald-400">{a.ready}</td>
-                    <td className="px-3 py-2 text-right font-mono text-red-400">{a.breakdown || "-"}</td>
-                    <td className="px-3 py-2 text-right font-mono text-slate-200">{a.readiness}%</td>
+                  <tr key={a.code} className="hover:bg-slate-800/30 transition-colors">
+                    <td className="px-4 py-2.5 text-slate-200">{a.name}</td>
+                    <td className="px-4 py-2.5 font-mono text-slate-500">{a.code}</td>
+                    <td className="px-4 py-2.5 text-right font-mono text-slate-300">{a.total}</td>
+                    <td className="px-4 py-2.5 text-right font-mono text-emerald-400">{a.ready}</td>
+                    <td className="px-4 py-2.5 text-right font-mono text-red-400">{a.breakdown || "-"}</td>
+                    <td className="px-4 py-2.5 text-right font-mono text-slate-200">{a.readiness}%</td>
                   </tr>
                 ))}
               </tbody>
@@ -1337,15 +1465,18 @@ function ControlTower({ counts, readiness, needAttention, onOpenEq, now, areaMat
         </div>
       )}
 
-      <div className="rounded-xl border border-slate-800 bg-slate-900/60">
-        <div className="flex items-center gap-2 px-4 py-3 border-b border-slate-800"><ShieldAlert size={16} className="text-red-400" /><h2 className="text-sm font-semibold text-slate-100">Need Attention</h2></div>
+      <div className="rounded-2xl border border-slate-800 bg-slate-900/60 shadow-lg shadow-black/10 overflow-hidden">
+        <div className="flex items-center gap-2.5 px-5 py-3.5 border-b border-slate-800">
+          <span className="h-7 w-7 rounded-lg bg-red-500/10 flex items-center justify-center"><ShieldAlert size={15} className="text-red-400" /></span>
+          <h2 className="text-sm font-semibold text-slate-100">Need Attention</h2>
+        </div>
         {needAttention.length === 0 ? (
-          <div className="p-8 text-center text-slate-500 text-sm"><CheckCircle2 className="mx-auto mb-2 text-emerald-500" size={22} />No open exceptions.</div>
+          <div className="p-10 text-center text-slate-500 text-sm"><CheckCircle2 className="mx-auto mb-2 text-emerald-500" size={22} />No open exceptions.</div>
         ) : (
-          <div className="divide-y divide-slate-800">
+          <div className="divide-y divide-slate-800/70">
             {needAttention.slice(0, 40).map(({ eq, inc, level, flags, downtimeMs }) => (
-              <button key={eq.id} onClick={() => onOpenEq(eq.id)} className="w-full flex items-center gap-3 px-4 py-3 hover:bg-slate-800/40 text-left">
-                <span className={`text-[10px] font-mono font-bold rounded px-1.5 py-0.5 ${level==="CRITICAL"?"bg-red-500 text-white":"bg-amber-400 text-slate-900"}`}>{level}</span>
+              <button key={eq.id} onClick={() => onOpenEq(eq.id)} className="w-full flex items-center gap-3 px-5 py-3.5 hover:bg-slate-800/40 text-left transition-colors">
+                <span className={`text-[10px] font-mono font-bold rounded-md px-2 py-1 shrink-0 ${level==="CRITICAL"?"bg-red-500 text-white":"bg-amber-400 text-slate-900"}`}>{level}</span>
                 <div className="min-w-0 flex-1">
                   <div className="flex items-center gap-2"><span className="font-mono text-sm text-slate-100">{eq.id}</span><span className="text-[10px] text-slate-600 font-mono">{areaName(eq.areaCode)}</span></div>
                   <div className="text-xs text-slate-400 truncate">{inc?.problem} · PIC: {inc?.pic}</div>
