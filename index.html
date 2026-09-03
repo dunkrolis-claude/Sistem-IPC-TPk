@@ -3,13 +3,14 @@
 <head>
 <meta charset="UTF-8" />
 <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-<title>Equipment Readiness Control Tower — ERCT Pilot</title>
-<meta name="description" content="Single source of truth for equipment readiness — MVP pilot, Tanjung Priok" />
+<title>Equipment Readiness Control Tower — ERCT Pilot v2.1</title>
+<meta name="description" content="Multi-area equipment readiness control tower — IPC TPK, PRD v2.1" />
 <link rel="preconnect" href="https://fonts.googleapis.com">
 <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet">
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
 <style>
   html, body, #root { height: 100%; margin: 0; }
@@ -17,6 +18,7 @@
   ::-webkit-scrollbar { width: 8px; height: 8px; }
   ::-webkit-scrollbar-track { background: #0f172a; }
   ::-webkit-scrollbar-thumb { background: #334155; border-radius: 4px; }
+  @media print { html, body { background: #fff !important; } }
 </style>
 </head>
 <body>
@@ -26,9 +28,9 @@
   // Local persistence shim.
   // Replaces the Claude-artifact "window.storage" API with browser localStorage
   // so the app runs as a plain static site (GitHub Pages / Vercel, no backend).
-  // NOTE: data is saved per-browser/device only — it is NOT shared automatically
-  // between different Admin On Duty devices. Upgrade to a real backend
-  // (e.g. Supabase/Firebase) when you're ready to move past a single-device pilot.
+  // NOTE: data (including the demo user passwords) is saved per-browser/device
+  // only and in PLAINTEXT — fine for prototype/demo use, not for production.
+  // A real deployment needs a real backend with hashed auth (see PRD §5, §18).
   window.storage = {
     async get(key) {
       const raw = localStorage.getItem(key);
@@ -50,6 +52,9 @@
       return { keys, prefix, shared: false };
     },
   };
+  // XLSX is loaded as a UMD global by the SheetJS script above; alias it so
+  // the app code (written against `import * as XLSX from "xlsx"`) works unchanged.
+  window.XLSX = window.XLSX || {};
 </script>
 
 <script type="text/babel" data-presets="react">
@@ -57,7 +62,7 @@
 /* Minimal inline SVG icon set (replaces lucide-react — no external CDN)   */
 /* ---------------------------------------------------------------------- */
 
-const { useState, useEffect, useMemo, useCallback } = React;
+const { useState, useEffect, useMemo, useCallback, useRef } = React;
 
 function Icon({ size = 16, className = "", children }) {
   return (
@@ -87,103 +92,555 @@ function ArrowLeftRight(p) { return <Icon {...p}><polyline points="7,4 3,8 7,12"
 function UserCircle2(p) { return <Icon {...p}><circle cx="12" cy="12" r="9" /><circle cx="12" cy="10" r="3" /><path d="M6.3 18.3a6.5 6.5 0 0 1 11.4 0" /></Icon>; }
 function Camera(p) { return <Icon {...p}><path d="M4 8h3l1.5-2h7L17 8h3v11H4Z" /><circle cx="12" cy="13.5" r="3.2" /></Icon>; }
 function LayoutGrid(p) { return <Icon {...p}><rect x="3.5" y="3.5" width="7" height="7" rx="1" /><rect x="13.5" y="3.5" width="7" height="7" rx="1" /><rect x="3.5" y="13.5" width="7" height="7" rx="1" /><rect x="13.5" y="13.5" width="7" height="7" rx="1" /></Icon>; }
+function Building2(p) { return <Icon {...p}><rect x="4" y="3" width="10" height="18" rx="1" /><rect x="14" y="9" width="6" height="12" rx="1" /><line x1="7" y1="7" x2="7" y2="7.01" /><line x1="10.5" y1="7" x2="10.5" y2="7.01" /><line x1="7" y1="11" x2="7" y2="11.01" /><line x1="10.5" y1="11" x2="10.5" y2="11.01" /><line x1="7" y1="15" x2="7" y2="15.01" /><line x1="10.5" y1="15" x2="10.5" y2="15.01" /></Icon>; }
+function Menu(p) { return <Icon {...p}><line x1="4" y1="7" x2="20" y2="7" /><line x1="4" y1="12" x2="20" y2="12" /><line x1="4" y1="17" x2="20" y2="17" /></Icon>; }
+function Settings(p) { return <Icon {...p}><circle cx="12" cy="12" r="3" /><path d="M19.4 13.5c.1-.5.1-1 0-1.5l1.6-1.4-2-3.4-2 .6a7 7 0 0 0-1.3-.8L15.3 5h-4l-.4 2a7 7 0 0 0-1.3.8l-2-.6-2 3.4L7.2 12c-.1.5-.1 1 0 1.5l-1.6 1.4 2 3.4 2-.6c.4.3.8.6 1.3.8l.4 2h4l.4-2c.5-.2.9-.5 1.3-.8l2 .6 2-3.4-1.6-1.4Z" /></Icon>; }
+function MapPin(p) { return <Icon {...p}><path d="M12 21s-7-6.2-7-11a7 7 0 0 1 14 0c0 4.8-7 11-7 11Z" /><circle cx="12" cy="10" r="2.5" /></Icon>; }
+function InfoIcon(p) { return <Icon {...p}><circle cx="12" cy="12" r="9" /><line x1="12" y1="11" x2="12" y2="16" /><circle cx="12" cy="7.7" r="0.6" fill="currentColor" stroke="none" /></Icon>; }
+function Upload(p) { return <Icon {...p}><path d="M12 16V4M7 9l5-5 5 5" /><path d="M4 16v3a2 2 0 0 0 2 2h12a2 2 0 0 0 2-2v-3" /></Icon>; }
+function FileSpreadsheet(p) { return <Icon {...p}><path d="M6 2h9l5 5v13a1 1 0 0 1-1 1H6a1 1 0 0 1-1-1V3a1 1 0 0 1 1-1Z" /><path d="M14 2v6h6" /><line x1="8" y1="13" x2="16" y2="13" /><line x1="8" y1="17" x2="16" y2="17" /><line x1="11" y1="13" x2="11" y2="20" /></Icon>; }
+function Printer(p) { return <Icon {...p}><rect x="6" y="9" width="12" height="7" rx="1" /><path d="M6 9V4a1 1 0 0 1 1-1h10a1 1 0 0 1 1 1v5" /><path d="M6 16v4a1 1 0 0 0 1 1h10a1 1 0 0 0 1-1v-4" /><line x1="9" y1="12" x2="15" y2="12" /></Icon>; }
 
 /* ---------------------------------------------------------------------- */
 /* Config / constants                                                      */
 /* ---------------------------------------------------------------------- */
 
 const STATUS = {
-  READY: { label: "READY", color: "#34d399", bg: "bg-emerald-500", text: "text-emerald-400", ring: "ring-emerald-500/30", soft: "bg-emerald-500/10" },
-  READY_NOTE: { label: "READY WITH NOTE", color: "#fbbf24", bg: "bg-amber-400", text: "text-amber-300", ring: "ring-amber-400/30", soft: "bg-amber-400/10" },
-  MAINTENANCE: { label: "MAINTENANCE", color: "#60a5fa", bg: "bg-blue-400", text: "text-blue-300", ring: "ring-blue-400/30", soft: "bg-blue-400/10" },
-  BREAKDOWN: { label: "BREAKDOWN", color: "#f87171", bg: "bg-red-500", text: "text-red-400", ring: "ring-red-500/30", soft: "bg-red-500/10" },
-  OUT_OF_SERVICE: { label: "OUT OF SERVICE", color: "#9ca3af", bg: "bg-zinc-400", text: "text-zinc-400", ring: "ring-zinc-400/30", soft: "bg-zinc-400/10" },
+  READY: { label: "READY", bg: "bg-emerald-500", text: "text-emerald-400", ring: "ring-emerald-500/30", soft: "bg-emerald-500/10" },
+  READY_NOTE: { label: "READY WITH NOTE", bg: "bg-amber-400", text: "text-amber-300", ring: "ring-amber-400/30", soft: "bg-amber-400/10" },
+  MAINTENANCE: { label: "MAINTENANCE", bg: "bg-blue-400", text: "text-blue-300", ring: "ring-blue-400/30", soft: "bg-blue-400/10" },
+  BREAKDOWN: { label: "BREAKDOWN", bg: "bg-red-500", text: "text-red-400", ring: "ring-red-500/30", soft: "bg-red-500/10" },
+  OUT_OF_SERVICE: { label: "OUT OF SERVICE", bg: "bg-zinc-400", text: "text-zinc-400", ring: "ring-zinc-400/30", soft: "bg-zinc-400/10" },
 };
 
+// Section 5 — User Roles & Access Control
 const ROLES = {
-  admin: { label: "Admin On Duty", canEdit: true, canHandover: true, canMaster: false },
-  supervisor: { label: "Area Supervisor / PIC", canEdit: true, canHandover: true, canMaster: false },
-  management: { label: "Regional / Management", canEdit: false, canHandover: false, canMaster: false },
-  sysadmin: { label: "System Administrator", canEdit: true, canHandover: true, canMaster: true },
+  AREA_ADMIN: { label: "Area Admin", scoped: true, canEdit: true, canHandover: true, canMaster: false, canAudit: false, home: "home" },
+  AREA_SUPERVISOR: { label: "Area Supervisor", scoped: true, canEdit: true, canHandover: true, canMaster: false, canAudit: false, home: "home" },
+  MANAGEMENT_VIEWER: { label: "Management Viewer", scoped: false, canEdit: false, canHandover: false, canMaster: false, canAudit: false, home: "tower" },
+  SYSTEM_ADMIN: { label: "System Admin", scoped: false, canEdit: true, canHandover: true, canMaster: true, canAudit: true, home: "tower" },
+  SUPER_ADMIN: { label: "Super Admin", scoped: false, canEdit: true, canHandover: true, canMaster: true, canAudit: true, home: "tower" },
 };
 
-const ORG = "IPC TPK";
-const AREA = "Tanjung Priok";
-const SUB_AREAS = ["T1", "T2", "T3"];
+// Section 2 — Source Data Baseline (13 operational areas, 384 equipment)
+const AREAS = [
+  { code: "ZN1", fullCode: "IPC-TPK-JAKARTA-ZN1", name: "Jakarta Zona 1", adminModel: "4 admin area", count: 20 },
+  { code: "ZN2", fullCode: "IPC-TPK-JAKARTA-ZN2ADP", name: "Jakarta Zona 2", adminModel: "4 admin area", count: 37 },
+  { code: "ZN3", fullCode: "IPC-TPK-JAKARTA-ZN3DHU", name: "Jakarta Zona 3", adminModel: "4 admin area", count: 30 },
+  { code: "DMSTMS", fullCode: "IPC-TPK-JAKARTA-DMST-TMS", name: "Jakarta Domestik TMS", adminModel: "4 admin area", count: 46 },
+  { code: "DMSMSA", fullCode: "IPC-TPK-JAKARTA-DMST-MSA", name: "Jakarta Domestik MSA", adminModel: "Shared: Admin Domestik TMS", count: 28 },
+  { code: "OGTSJ", fullCode: "IPC-TPK-JAKARTA-OG-TSJ", name: "Jakarta Ocean Going TSJ", adminModel: "Shared: Admin OJA", count: 43 },
+  { code: "OGOJA", fullCode: "IPC-TPK-JAKARTA-OG-OJA", name: "Jakarta Ocean Going OJA", adminModel: "4 admin area", count: 51 },
+  { code: "OGMAL", fullCode: "IPC-TPK-JAKARTA-OG-MAL", name: "Jakarta Ocean Going MAL", adminModel: "Shared: Admin OJA", count: 13 },
+  { code: "PNJ", fullCode: "IPC-TPK-PNJ", name: "Lampung", adminModel: "4 admin area", count: 25 },
+  { code: "PLM", fullCode: "IPC-TPK-PLM", name: "Palembang", adminModel: "4 admin area", count: 22 },
+  { code: "PNT", fullCode: "IPC-TPK-PNT", name: "Pontianak", adminModel: "4 admin area", count: 29 },
+  { code: "TLBYR", fullCode: "IPC-TPK-TLBYR", name: "Teluk Bayur", adminModel: "4 admin area", count: 19 },
+  { code: "JMBI", fullCode: "IPC-TPK-JMBI", name: "Jambi", adminModel: "4 admin area", count: 21 },
+];
+
+const CATEGORY_LIST = ["QCC", "RTGC", "RMGC", "HMC", "CH", "HDT", "TTR", "GJC", "GLC", "FJB"];
+const CRITICAL_CATEGORIES = new Set(["QCC", "RTGC", "RMGC", "HMC"]);
 
 const STORAGE_KEYS = {
-  equipment: "erct:equipment",
-  incidents: "erct:incidents",
-  history: "erct:history",
-  handovers: "erct:handovers",
-  audit: "erct:audit",
+  equipment: "erct5:equipment",
+  incidents: "erct5:incidents",
+  history: "erct5:history",
+  handovers: "erct5:handovers",
+  audit: "erct5:audit",
+  categories: "erct5:categories",
+  users: "erct5:users",
+  shifts: "erct5:shifts",
+  subAreas: "erct5:subareas",
 };
 
 /* ---------------------------------------------------------------------- */
-/* Seed data                                                                */
+/* Seed / baseline generation (Section 2 + 7)                              */
 /* ---------------------------------------------------------------------- */
 
 const hoursAgo = (h) => new Date(Date.now() - h * 3600 * 1000).toISOString();
 
-function seedEquipment() {
-  const list = [
-    { id: "QCC-01", name: "Quay Container Crane 01", category: "QCC", subArea: "T1", criticality: "critical" },
-    { id: "QCC-02", name: "Quay Container Crane 02", category: "QCC", subArea: "T1", criticality: "critical" },
-    { id: "QCC-03", name: "Quay Container Crane 03", category: "QCC", subArea: "T1", criticality: "critical" },
-    { id: "QCC-04", name: "Quay Container Crane 04", category: "QCC", subArea: "T2", criticality: "critical" },
-    { id: "QCC-05", name: "Quay Container Crane 05", category: "QCC", subArea: "T2", criticality: "critical" },
-    { id: "QCC-06", name: "Quay Container Crane 06", category: "QCC", subArea: "T2", criticality: "critical" },
-    { id: "RTG-01", name: "Rubber Tyred Gantry 01", category: "RTG", subArea: "T1", criticality: "critical" },
-    { id: "RTG-02", name: "Rubber Tyred Gantry 02", category: "RTG", subArea: "T1", criticality: "normal" },
-    { id: "RTG-03", name: "Rubber Tyred Gantry 03", category: "RTG", subArea: "T2", criticality: "normal" },
-    { id: "RMGC-01", name: "Rail Mounted Gantry Crane 01", category: "RMGC", subArea: "T3", criticality: "critical" },
-    { id: "RMGC-02", name: "Rail Mounted Gantry Crane 02", category: "RMGC", subArea: "T3", criticality: "normal" },
-    { id: "RS-01", name: "Reach Stacker 01", category: "RS", subArea: "T2", criticality: "normal" },
-    { id: "HDT-01", name: "Head Truck 01", category: "HDT", subArea: "T1", criticality: "normal" },
-    { id: "HDT-02", name: "Head Truck 02", category: "HDT", subArea: "T3", criticality: "normal" },
-    { id: "HDT-03", name: "Head Truck 03", category: "HDT", subArea: "T3", criticality: "normal" },
-  ];
+const REAL_EQUIPMENT_BASELINE = [
+  { id: "T009-QCC 01", name: "Quay Container Crane (QCC)", category: "QCC", areaCode: "ZN1", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 1.5 },
+  { id: "T009-QCC 02", name: "Quay Container Crane (QCC)", category: "QCC", areaCode: "ZN1", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 2.5 },
+  { id: "T009-QCC 03", name: "Quay Container Crane (QCC)", category: "QCC", areaCode: "ZN1", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 3.5 },
+  { id: "T009-RTGC 01", name: "Rubber Tyred Gantry Crane (RTGC)", category: "RTGC", areaCode: "ZN1", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 4.5 },
+  { id: "T009-RTGC 02", name: "Rubber Tyred Gantry Crane (RTGC)", category: "RTGC", areaCode: "ZN1", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 5.5 },
+  { id: "T009-RTGC 03", name: "Rubber Tyred Gantry Crane (RTGC)", category: "RTGC", areaCode: "ZN1", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 6.5 },
+  { id: "T009-RTGC 04", name: "Rubber Tyred Gantry Crane (RTGC)", category: "RTGC", areaCode: "ZN1", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 7.5 },
+  { id: "T009-RTGC 13", name: "Rubber Tyred Gantry Crane (RTGC)", category: "RTGC", areaCode: "ZN1", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 8.5 },
+  { id: "T009-HDT 01", name: "HDT/TTR", category: "HDT", areaCode: "ZN1", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 9.5 },
+  { id: "T009-HDT 02", name: "HDT/TTR", category: "HDT", areaCode: "ZN1", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 10.5 },
+  { id: "T009-HDT 03", name: "HDT/TTR", category: "HDT", areaCode: "ZN1", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 11.5 },
+  { id: "T009-HDT 04", name: "HDT/TTR", category: "HDT", areaCode: "ZN1", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 12.5 },
+  { id: "T009-TTR 06", name: "HDT/TTR", category: "HDT", areaCode: "ZN1", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 13.5 },
+  { id: "T009-TTR 07", name: "HDT/TTR", category: "HDT", areaCode: "ZN1", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 14.5 },
+  { id: "T009-TTR 08", name: "HDT/TTR", category: "HDT", areaCode: "ZN1", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 15.5 },
+  { id: "T009-TTR 09", name: "HDT/TTR", category: "HDT", areaCode: "ZN1", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 16.5 },
+  { id: "T009-TTR 10", name: "HDT/TTR", category: "HDT", areaCode: "ZN1", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 17.5 },
+  { id: "T009-TTR 11", name: "HDT/TTR", category: "HDT", areaCode: "ZN1", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 18.5 },
+  { id: "T009-HDT 12", name: "HDT/TTR", category: "HDT", areaCode: "ZN1", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 19.5 },
+  { id: "T009-HDT 13", name: "HDT/TTR", category: "HDT", areaCode: "ZN1", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 20.5 },
+  { id: "ADP-QCC 01", name: "Quay Container Crane (QCC)", category: "QCC", areaCode: "ZN2", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 21.5 },
+  { id: "ADP-QCC 02", name: "Quay Container Crane (QCC)", category: "QCC", areaCode: "ZN2", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 22.5 },
+  { id: "ADP-QCC 03", name: "Quay Container Crane (QCC)", category: "QCC", areaCode: "ZN2", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 23.5 },
+  { id: "ADP-QCC 04", name: "Quay Container Crane (QCC)", category: "QCC", areaCode: "ZN2", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 24.5 },
+  { id: "ADP-RTGC 01", name: "Rubber Tyred Gantry Crane (RTGC)", category: "RTGC", areaCode: "ZN2", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 25.5 },
+  { id: "ADP-RTGC 02", name: "Rubber Tyred Gantry Crane (RTGC)", category: "RTGC", areaCode: "ZN2", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 26.5 },
+  { id: "ADP-RTGC 03", name: "Rubber Tyred Gantry Crane (RTGC)", category: "RTGC", areaCode: "ZN2", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 27.5 },
+  { id: "ADP-RTGC 04", name: "Rubber Tyred Gantry Crane (RTGC)", category: "RTGC", areaCode: "ZN2", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 28.5 },
+  { id: "ADP-RTGC 05", name: "Rubber Tyred Gantry Crane (RTGC)", category: "RTGC", areaCode: "ZN2", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 29.5 },
+  { id: "ADP-RTGC 06", name: "Rubber Tyred Gantry Crane (RTGC)", category: "RTGC", areaCode: "ZN2", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 0.5 },
+  { id: "ADP-RTGC 07", name: "Rubber Tyred Gantry Crane (RTGC)", category: "RTGC", areaCode: "ZN2", criticality: "critical", status: "MAINTENANCE", remark: "Scheduled preventive maintenance", hoursAgoSeed: 1.5 },
+  { id: "ADP-RTGC 08", name: "Rubber Tyred Gantry Crane (RTGC)", category: "RTGC", areaCode: "ZN2", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 2.5 },
+  { id: "ADP-RTGC 10", name: "Rubber Tyred Gantry Crane (RTGC)", category: "RTGC", areaCode: "ZN2", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 3.5 },
+  { id: "ADP-RTGC 11", name: "Rubber Tyred Gantry Crane (RTGC)", category: "RTGC", areaCode: "ZN2", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 4.5 },
+  { id: "ADP-RTGC 12", name: "Rubber Tyred Gantry Crane (RTGC)", category: "RTGC", areaCode: "ZN2", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 5.5 },
+  { id: "ADP-LINDE/2014", name: "Container Handler (CH)", category: "CH", areaCode: "ZN2", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 6.5 },
+  { id: "ADP-KALMAR/2008", name: "Container Handler (CH)", category: "CH", areaCode: "ZN2", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 7.5 },
+  { id: "ADP-SANNY/2022", name: "Container Handler (CH)", category: "CH", areaCode: "ZN2", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 8.5 },
+  { id: "ADP-TCM/2014", name: "Container Handler (CH)", category: "CH", areaCode: "ZN2", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 9.5 },
+  { id: "ADP-HDT 01", name: "HDT/TTR", category: "HDT", areaCode: "ZN2", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 10.5 },
+  { id: "ADP-HDT 02", name: "HDT/TTR", category: "HDT", areaCode: "ZN2", criticality: "normal", status: "READY_NOTE", remark: "Operating with minor limitation", hoursAgoSeed: 11.5 },
+  { id: "ADP-HDT 03", name: "HDT/TTR", category: "HDT", areaCode: "ZN2", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 12.5 },
+  { id: "ADP-HDT 04", name: "HDT/TTR", category: "HDT", areaCode: "ZN2", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 13.5 },
+  { id: "ADP-HDT 05", name: "HDT/TTR", category: "HDT", areaCode: "ZN2", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 14.5 },
+  { id: "ADP-HDT 06", name: "HDT/TTR", category: "HDT", areaCode: "ZN2", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 15.5 },
+  { id: "ADP-HDT 07", name: "HDT/TTR", category: "HDT", areaCode: "ZN2", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 16.5 },
+  { id: "ADP-HDT 08", name: "HDT/TTR", category: "HDT", areaCode: "ZN2", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 17.5 },
+  { id: "ADP-HDT 09", name: "HDT/TTR", category: "HDT", areaCode: "ZN2", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 18.5 },
+  { id: "ADP-HDT 11", name: "HDT/TTR", category: "HDT", areaCode: "ZN2", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 19.5 },
+  { id: "ADP-HDT 12", name: "HDT/TTR", category: "HDT", areaCode: "ZN2", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 20.5 },
+  { id: "ADP-HDT 13", name: "HDT/TTR", category: "HDT", areaCode: "ZN2", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 21.5 },
+  { id: "ADP-HDT 14", name: "HDT/TTR", category: "HDT", areaCode: "ZN2", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 22.5 },
+  { id: "ADP-HDT 15", name: "HDT/TTR", category: "HDT", areaCode: "ZN2", criticality: "normal", status: "BREAKDOWN", remark: "Reported failure — needs investigation", hoursAgoSeed: 23.5 },
+  { id: "ADP-HDT 16", name: "HDT/TTR", category: "HDT", areaCode: "ZN2", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 24.5 },
+  { id: "ADP-HDT 17", name: "HDT/TTR", category: "HDT", areaCode: "ZN2", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 25.5 },
+  { id: "ADP-HDT 18", name: "HDT/TTR", category: "HDT", areaCode: "ZN2", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 26.5 },
+  { id: "ADP-HDT 19", name: "HDT/TTR", category: "HDT", areaCode: "ZN2", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 27.5 },
+  { id: "DHU-QCC 01", name: "Quay Container Crane (QCC)", category: "QCC", areaCode: "ZN3", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 28.5 },
+  { id: "DHU-QCC 02", name: "Quay Container Crane (QCC)", category: "QCC", areaCode: "ZN3", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 29.5 },
+  { id: "DHU-QCC 03", name: "Quay Container Crane (QCC)", category: "QCC", areaCode: "ZN3", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 0.5 },
+  { id: "DHU-HMC 01", name: "Harbour Mobile Crane (HMC)", category: "HMC", areaCode: "ZN3", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 1.5 },
+  { id: "DHU-HMC 02", name: "Harbour Mobile Crane (HMC)", category: "HMC", areaCode: "ZN3", criticality: "critical", status: "MAINTENANCE", remark: "Scheduled preventive maintenance", hoursAgoSeed: 2.5 },
+  { id: "DHU-HMC 03", name: "Harbour Mobile Crane (HMC)", category: "HMC", areaCode: "ZN3", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 3.5 },
+  { id: "DHU-RMGC 01", name: "Rail Mounted Gantry Crane (RMGC)", category: "RMGC", areaCode: "ZN3", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 4.5 },
+  { id: "DHU-RMGC 02", name: "Rail Mounted Gantry Crane (RMGC)", category: "RMGC", areaCode: "ZN3", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 5.5 },
+  { id: "DHU-RMGC 03", name: "Rail Mounted Gantry Crane (RMGC)", category: "RMGC", areaCode: "ZN3", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 6.5 },
+  { id: "DHU-RMGC 04", name: "Rail Mounted Gantry Crane (RMGC)", category: "RMGC", areaCode: "ZN3", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 7.5 },
+  { id: "DHU-RTGC-07", name: "Rubber Tyred Gantry Crane (RTGC)", category: "RTGC", areaCode: "ZN3", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 8.5 },
+  { id: "DHU-RTGC-08", name: "Rubber Tyred Gantry Crane (RTGC)", category: "RTGC", areaCode: "ZN3", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 9.5 },
+  { id: "DHU-RTGC-09", name: "Rubber Tyred Gantry Crane (RTGC)", category: "RTGC", areaCode: "ZN3", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 10.5 },
+  { id: "DHU-RTGC-10", name: "Rubber Tyred Gantry Crane (RTGC)", category: "RTGC", areaCode: "ZN3", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 11.5 },
+  { id: "DHU-RTGC-11", name: "Rubber Tyred Gantry Crane (RTGC)", category: "RTGC", areaCode: "ZN3", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 12.5 },
+  { id: "DHU-HDT 01", name: "HDT/TTR", category: "HDT", areaCode: "ZN3", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 13.5 },
+  { id: "DHU-HDT 02", name: "HDT/TTR", category: "HDT", areaCode: "ZN3", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 14.5 },
+  { id: "DHU-HDT 03", name: "HDT/TTR", category: "HDT", areaCode: "ZN3", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 15.5 },
+  { id: "DHU-HDT 04", name: "HDT/TTR", category: "HDT", areaCode: "ZN3", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 16.5 },
+  { id: "DHU-HDT 05", name: "HDT/TTR", category: "HDT", areaCode: "ZN3", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 17.5 },
+  { id: "DHU-HDT 06", name: "HDT/TTR", category: "HDT", areaCode: "ZN3", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 18.5 },
+  { id: "DHU-HDT 07", name: "HDT/TTR", category: "HDT", areaCode: "ZN3", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 19.5 },
+  { id: "DHU-HDT 08", name: "HDT/TTR", category: "HDT", areaCode: "ZN3", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 20.5 },
+  { id: "DHU-HDT 09", name: "HDT/TTR", category: "HDT", areaCode: "ZN3", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 21.5 },
+  { id: "DHU-HDT 10", name: "HDT/TTR", category: "HDT", areaCode: "ZN3", criticality: "normal", status: "READY_NOTE", remark: "Operating with minor limitation", hoursAgoSeed: 22.5 },
+  { id: "DHU-HDT 11", name: "HDT/TTR", category: "HDT", areaCode: "ZN3", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 23.5 },
+  { id: "DHU-HDT 12", name: "HDT/TTR", category: "HDT", areaCode: "ZN3", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 24.5 },
+  { id: "DHU-HDT 13", name: "HDT/TTR", category: "HDT", areaCode: "ZN3", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 25.5 },
+  { id: "DHU-HDT 14", name: "HDT/TTR", category: "HDT", areaCode: "ZN3", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 26.5 },
+  { id: "DHU-HDT 15", name: "HDT/TTR", category: "HDT", areaCode: "ZN3", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 27.5 },
+  { id: "TMS-QCC 01", name: "Quay Container Crane (QCC)", category: "QCC", areaCode: "DMSTMS", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 28.5 },
+  { id: "TMS-QCC 02", name: "Quay Container Crane (QCC)", category: "QCC", areaCode: "DMSTMS", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 29.5 },
+  { id: "TMS-QCC 03", name: "Quay Container Crane (QCC)", category: "QCC", areaCode: "DMSTMS", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 0.5 },
+  { id: "TMS-QCC 04", name: "Quay Container Crane (QCC)", category: "QCC", areaCode: "DMSTMS", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 1.5 },
+  { id: "TMS-QCC 05", name: "Quay Container Crane (QCC)", category: "QCC", areaCode: "DMSTMS", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 2.5 },
+  { id: "TMS-HMC 01", name: "Harbour Mobile Crane (HMC)", category: "HMC", areaCode: "DMSTMS", criticality: "critical", status: "MAINTENANCE", remark: "Scheduled preventive maintenance", hoursAgoSeed: 3.5 },
+  { id: "TMS-RTGC 01", name: "Rubber Tyred Gantry Crane (RTGC)", category: "RTGC", areaCode: "DMSTMS", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 4.5 },
+  { id: "TMS-RTGC 02", name: "Rubber Tyred Gantry Crane (RTGC)", category: "RTGC", areaCode: "DMSTMS", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 5.5 },
+  { id: "TMS-RTGC 03", name: "Rubber Tyred Gantry Crane (RTGC)", category: "RTGC", areaCode: "DMSTMS", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 6.5 },
+  { id: "TMS-RTGC 04", name: "Rubber Tyred Gantry Crane (RTGC)", category: "RTGC", areaCode: "DMSTMS", criticality: "critical", status: "OUT_OF_SERVICE", remark: "Long-term non-operational", hoursAgoSeed: 7.5 },
+  { id: "TMS-RS 01", name: "Container Handler (CH)", category: "CH", areaCode: "DMSTMS", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 8.5 },
+  { id: "TMS-RS 02", name: "Container Handler (CH)", category: "CH", areaCode: "DMSTMS", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 9.5 },
+  { id: "TMS-HDT 01", name: "HDT/TTR", category: "HDT", areaCode: "DMSTMS", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 10.5 },
+  { id: "TMS-HDT02", name: "HDT/TTR", category: "HDT", areaCode: "DMSTMS", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 11.5 },
+  { id: "TMS-HDT 03", name: "HDT/TTR", category: "HDT", areaCode: "DMSTMS", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 12.5 },
+  { id: "TMS-HDT 04", name: "HDT/TTR", category: "HDT", areaCode: "DMSTMS", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 13.5 },
+  { id: "TMS-HDT 05", name: "HDT/TTR", category: "HDT", areaCode: "DMSTMS", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 14.5 },
+  { id: "TMS-HDT 06", name: "HDT/TTR", category: "HDT", areaCode: "DMSTMS", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 15.5 },
+  { id: "TMS-HDT 07", name: "HDT/TTR", category: "HDT", areaCode: "DMSTMS", criticality: "normal", status: "BREAKDOWN", remark: "Reported failure — needs investigation", hoursAgoSeed: 16.5 },
+  { id: "TMS-HDT 08", name: "HDT/TTR", category: "HDT", areaCode: "DMSTMS", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 17.5 },
+  { id: "TMS-HDT 09", name: "HDT/TTR", category: "HDT", areaCode: "DMSTMS", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 18.5 },
+  { id: "TMS-HDT 10", name: "HDT/TTR", category: "HDT", areaCode: "DMSTMS", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 19.5 },
+  { id: "TMS-HDT 11", name: "HDT/TTR", category: "HDT", areaCode: "DMSTMS", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 20.5 },
+  { id: "TMS-HDT 12", name: "HDT/TTR", category: "HDT", areaCode: "DMSTMS", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 21.5 },
+  { id: "TMS-HDT 13", name: "HDT/TTR", category: "HDT", areaCode: "DMSTMS", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 22.5 },
+  { id: "TMS-HDT 14", name: "HDT/TTR", category: "HDT", areaCode: "DMSTMS", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 23.5 },
+  { id: "TMS-HDT 15", name: "HDT/TTR", category: "HDT", areaCode: "DMSTMS", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 24.5 },
+  { id: "TMS-HDT 16", name: "HDT/TTR", category: "HDT", areaCode: "DMSTMS", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 25.5 },
+  { id: "TMS-HDT 17", name: "HDT/TTR", category: "HDT", areaCode: "DMSTMS", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 26.5 },
+  { id: "TMS-HDT 18", name: "HDT/TTR", category: "HDT", areaCode: "DMSTMS", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 27.5 },
+  { id: "TMS-HDT 19", name: "HDT/TTR", category: "HDT", areaCode: "DMSTMS", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 28.5 },
+  { id: "TMS-HDT 20", name: "HDT/TTR", category: "HDT", areaCode: "DMSTMS", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 29.5 },
+  { id: "TMS-HDT 21", name: "HDT/TTR", category: "HDT", areaCode: "DMSTMS", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 0.5 },
+  { id: "TMS-HDT 22", name: "HDT/TTR", category: "HDT", areaCode: "DMSTMS", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 1.5 },
+  { id: "TMS-HDT 23", name: "HDT/TTR", category: "HDT", areaCode: "DMSTMS", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 2.5 },
+  { id: "TMS-HDT 24", name: "HDT/TTR", category: "HDT", areaCode: "DMSTMS", criticality: "normal", status: "READY_NOTE", remark: "Operating with minor limitation", hoursAgoSeed: 3.5 },
+  { id: "TMS-HDT 25", name: "HDT/TTR", category: "HDT", areaCode: "DMSTMS", criticality: "normal", status: "MAINTENANCE", remark: "Scheduled preventive maintenance", hoursAgoSeed: 4.5 },
+  { id: "TMS-HDT 26", name: "HDT/TTR", category: "HDT", areaCode: "DMSTMS", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 5.5 },
+  { id: "TMS-HDT 27", name: "HDT/TTR", category: "HDT", areaCode: "DMSTMS", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 6.5 },
+  { id: "TMS-HDT 28", name: "HDT/TTR", category: "HDT", areaCode: "DMSTMS", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 7.5 },
+  { id: "TMS-HDT 29", name: "HDT/TTR", category: "HDT", areaCode: "DMSTMS", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 8.5 },
+  { id: "TMS-HDT 30", name: "HDT/TTR", category: "HDT", areaCode: "DMSTMS", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 9.5 },
+  { id: "TMS-HDT 31", name: "HDT/TTR", category: "HDT", areaCode: "DMSTMS", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 10.5 },
+  { id: "TMS-HDT 32", name: "HDT/TTR", category: "HDT", areaCode: "DMSTMS", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 11.5 },
+  { id: "TMS-HDT 33", name: "HDT/TTR", category: "HDT", areaCode: "DMSTMS", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 12.5 },
+  { id: "TMS-HDT 34", name: "HDT/TTR", category: "HDT", areaCode: "DMSTMS", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 13.5 },
+  { id: "MSA-QCC 01", name: "Quay Container Crane (QCC)", category: "QCC", areaCode: "DMSMSA", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 14.5 },
+  { id: "MSA-QCC 02", name: "Quay Container Crane (QCC)", category: "QCC", areaCode: "DMSMSA", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 15.5 },
+  { id: "MSA-QCC 03", name: "Quay Container Crane (QCC)", category: "QCC", areaCode: "DMSMSA", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 16.5 },
+  { id: "MSA-QCC 04", name: "Quay Container Crane (QCC)", category: "QCC", areaCode: "DMSMSA", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 17.5 },
+  { id: "MSA-QCC 05", name: "Quay Container Crane (QCC)", category: "QCC", areaCode: "DMSMSA", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 18.5 },
+  { id: "MSA-HMC 01", name: "Harbour Mobile Crane (HMC)", category: "HMC", areaCode: "DMSMSA", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 19.5 },
+  { id: "MSA-RTGC 01", name: "Rubber Tyred Gantry Crane (RTGC)", category: "RTGC", areaCode: "DMSMSA", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 20.5 },
+  { id: "MSA-RTGC 02", name: "Rubber Tyred Gantry Crane (RTGC)", category: "RTGC", areaCode: "DMSMSA", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 21.5 },
+  { id: "MSA-RTGC 05", name: "Rubber Tyred Gantry Crane (RTGC)", category: "RTGC", areaCode: "DMSMSA", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 22.5 },
+  { id: "MSA-RTGC 06", name: "Rubber Tyred Gantry Crane (RTGC)", category: "RTGC", areaCode: "DMSMSA", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 23.5 },
+  { id: "MSA-RTGC 07", name: "Rubber Tyred Gantry Crane (RTGC)", category: "RTGC", areaCode: "DMSMSA", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 24.5 },
+  { id: "MSA-RTGC 08", name: "Rubber Tyred Gantry Crane (RTGC)", category: "RTGC", areaCode: "DMSMSA", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 25.5 },
+  { id: "MSA-HDT 01", name: "HDT/TTR", category: "HDT", areaCode: "DMSMSA", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 26.5 },
+  { id: "MSA-HDT 02", name: "HDT/TTR", category: "HDT", areaCode: "DMSMSA", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 27.5 },
+  { id: "MSA-HDT 03", name: "HDT/TTR", category: "HDT", areaCode: "DMSMSA", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 28.5 },
+  { id: "MSA-HDT 04", name: "HDT/TTR", category: "HDT", areaCode: "DMSMSA", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 29.5 },
+  { id: "MSA-HDT 05", name: "HDT/TTR", category: "HDT", areaCode: "DMSMSA", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 0.5 },
+  { id: "MSA-HDT 06", name: "HDT/TTR", category: "HDT", areaCode: "DMSMSA", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 1.5 },
+  { id: "MSA-HDT 07", name: "HDT/TTR", category: "HDT", areaCode: "DMSMSA", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 2.5 },
+  { id: "MSA-HDT 08", name: "HDT/TTR", category: "HDT", areaCode: "DMSMSA", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 3.5 },
+  { id: "MSA-HDT 09", name: "HDT/TTR", category: "HDT", areaCode: "DMSMSA", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 4.5 },
+  { id: "MSA-HDT 10", name: "HDT/TTR", category: "HDT", areaCode: "DMSMSA", criticality: "normal", status: "MAINTENANCE", remark: "Scheduled preventive maintenance", hoursAgoSeed: 5.5 },
+  { id: "MSA-HDT 11", name: "HDT/TTR", category: "HDT", areaCode: "DMSMSA", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 6.5 },
+  { id: "MSA-HDT 12", name: "HDT/TTR", category: "HDT", areaCode: "DMSMSA", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 7.5 },
+  { id: "MSA-HDT 13", name: "HDT/TTR", category: "HDT", areaCode: "DMSMSA", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 8.5 },
+  { id: "MSA-HDT 14", name: "HDT/TTR", category: "HDT", areaCode: "DMSMSA", criticality: "normal", status: "BREAKDOWN", remark: "Reported failure — needs investigation", hoursAgoSeed: 9.5 },
+  { id: "MSA-HDT 15", name: "HDT/TTR", category: "HDT", areaCode: "DMSMSA", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 10.5 },
+  { id: "MSA-HDT 16", name: "HDT/TTR", category: "HDT", areaCode: "DMSMSA", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 11.5 },
+  { id: "TSJ-QCC 01", name: "Quay Container Crane (QCC)", category: "QCC", areaCode: "OGTSJ", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 12.5 },
+  { id: "TSJ-QCC 02", name: "Quay Container Crane (QCC)", category: "QCC", areaCode: "OGTSJ", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 13.5 },
+  { id: "TSJ-HMC 4406", name: "Harbour Mobile Crane (HMC)", category: "HMC", areaCode: "OGTSJ", criticality: "critical", status: "READY_NOTE", remark: "Operating with minor limitation", hoursAgoSeed: 14.5 },
+  { id: "TSJ-HMC 300", name: "Harbour Mobile Crane (HMC)", category: "HMC", areaCode: "OGTSJ", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 15.5 },
+  { id: "TSJ-HMC 260", name: "Harbour Mobile Crane (HMC)", category: "HMC", areaCode: "OGTSJ", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 16.5 },
+  { id: "TSJ-RTGC 01", name: "Rubber Tyred Gantry Crane (RTGC)", category: "RTGC", areaCode: "OGTSJ", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 17.5 },
+  { id: "TSJ-RTGC 02", name: "Rubber Tyred Gantry Crane (RTGC)", category: "RTGC", areaCode: "OGTSJ", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 18.5 },
+  { id: "TSJ-RTGC 03", name: "Rubber Tyred Gantry Crane (RTGC)", category: "RTGC", areaCode: "OGTSJ", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 19.5 },
+  { id: "TSJ-RTGC 04", name: "Rubber Tyred Gantry Crane (RTGC)", category: "RTGC", areaCode: "OGTSJ", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 20.5 },
+  { id: "TSJ-RTGC 05", name: "Rubber Tyred Gantry Crane (RTGC)", category: "RTGC", areaCode: "OGTSJ", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 21.5 },
+  { id: "TSJ-RTGC 06", name: "Rubber Tyred Gantry Crane (RTGC)", category: "RTGC", areaCode: "OGTSJ", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 22.5 },
+  { id: "TSJ-RTGC 07", name: "Rubber Tyred Gantry Crane (RTGC)", category: "RTGC", areaCode: "OGTSJ", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 23.5 },
+  { id: "TSJ-RTGC 08", name: "Rubber Tyred Gantry Crane (RTGC)", category: "RTGC", areaCode: "OGTSJ", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 24.5 },
+  { id: "TSJ-RTGC 09", name: "Rubber Tyred Gantry Crane (RTGC)", category: "RTGC", areaCode: "OGTSJ", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 25.5 },
+  { id: "TSJ-RTGC 10", name: "Rubber Tyred Gantry Crane (RTGC)", category: "RTGC", areaCode: "OGTSJ", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 26.5 },
+  { id: "TSJ-311", name: "Container Handler (CH)", category: "CH", areaCode: "OGTSJ", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 27.5 },
+  { id: "TSJ-312", name: "Container Handler (CH)", category: "CH", areaCode: "OGTSJ", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 28.5 },
+  { id: "TSJ-513", name: "Container Handler (CH)", category: "CH", areaCode: "OGTSJ", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 29.5 },
+  { id: "TSJ-104", name: "Container Handler (CH)", category: "CH", areaCode: "OGTSJ", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 0.5 },
+  { id: "TSJ-152", name: "Container Handler (CH)", category: "CH", areaCode: "OGTSJ", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 1.5 },
+  { id: "TSJ-451", name: "Container Handler (CH)", category: "CH", areaCode: "OGTSJ", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 2.5 },
+  { id: "TSJ-452", name: "Container Handler (CH)", category: "CH", areaCode: "OGTSJ", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 3.5 },
+  { id: "TSJ-454", name: "Container Handler (CH)", category: "CH", areaCode: "OGTSJ", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 4.5 },
+  { id: "TSJ-455", name: "Container Handler (CH)", category: "CH", areaCode: "OGTSJ", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 5.5 },
+  { id: "TSJ-101", name: "Container Handler (CH)", category: "CH", areaCode: "OGTSJ", criticality: "normal", status: "MAINTENANCE", remark: "Scheduled preventive maintenance", hoursAgoSeed: 6.5 },
+  { id: "TSJ- HDT 43", name: "HDT/TTR", category: "HDT", areaCode: "OGTSJ", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 7.5 },
+  { id: "TSJ- HDT 48", name: "HDT/TTR", category: "HDT", areaCode: "OGTSJ", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 8.5 },
+  { id: "TSJ- HDT 46", name: "HDT/TTR", category: "HDT", areaCode: "OGTSJ", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 9.5 },
+  { id: "TSJ- HDT 45", name: "HDT/TTR", category: "HDT", areaCode: "OGTSJ", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 10.5 },
+  { id: "TSJ- HDT 34", name: "HDT/TTR", category: "HDT", areaCode: "OGTSJ", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 11.5 },
+  { id: "TSJ- HDT 36", name: "HDT/TTR", category: "HDT", areaCode: "OGTSJ", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 12.5 },
+  { id: "TSJ- HDT 31", name: "HDT/TTR", category: "HDT", areaCode: "OGTSJ", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 13.5 },
+  { id: "TSJ- HDT 42", name: "HDT/TTR", category: "HDT", areaCode: "OGTSJ", criticality: "normal", status: "OUT_OF_SERVICE", remark: "Long-term non-operational", hoursAgoSeed: 14.5 },
+  { id: "TSJ- HDT 33", name: "HDT/TTR", category: "HDT", areaCode: "OGTSJ", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 15.5 },
+  { id: "TSJ- HDT 30", name: "HDT/TTR", category: "HDT", areaCode: "OGTSJ", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 16.5 },
+  { id: "TSJ- HDT 39", name: "HDT/TTR", category: "HDT", areaCode: "OGTSJ", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 17.5 },
+  { id: "TSJ- HDT 44", name: "HDT/TTR", category: "HDT", areaCode: "OGTSJ", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 18.5 },
+  { id: "TSJ- HDT 38", name: "HDT/TTR", category: "HDT", areaCode: "OGTSJ", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 19.5 },
+  { id: "TSJ- HDT 37", name: "HDT/TTR", category: "HDT", areaCode: "OGTSJ", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 20.5 },
+  { id: "TSJ- HDT 35", name: "HDT/TTR", category: "HDT", areaCode: "OGTSJ", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 21.5 },
+  { id: "TSJ- HDT 49", name: "HDT/TTR", category: "HDT", areaCode: "OGTSJ", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 22.5 },
+  { id: "TSJ- HDT 40", name: "HDT/TTR", category: "HDT", areaCode: "OGTSJ", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 23.5 },
+  { id: "TSJ- HDT 32", name: "HDT/TTR", category: "HDT", areaCode: "OGTSJ", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 24.5 },
+  { id: "OJA-QCC 01", name: "Quay Container Crane (QCC)", category: "QCC", areaCode: "OGOJA", criticality: "critical", status: "READY_NOTE", remark: "Operating with minor limitation", hoursAgoSeed: 25.5 },
+  { id: "OJA-QCC 02", name: "Quay Container Crane (QCC)", category: "QCC", areaCode: "OGOJA", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 26.5 },
+  { id: "OJA-QCC 03", name: "Quay Container Crane (QCC)", category: "QCC", areaCode: "OGOJA", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 27.5 },
+  { id: "OJA-QCC 04", name: "Quay Container Crane (QCC)", category: "QCC", areaCode: "OGOJA", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 28.5 },
+  { id: "OJA-QCC 05", name: "Quay Container Crane (QCC)", category: "QCC", areaCode: "OGOJA", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 29.5 },
+  { id: "OJA-QCC 06", name: "Quay Container Crane (QCC)", category: "QCC", areaCode: "OGOJA", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 0.5 },
+  { id: "OJA-QCC 07", name: "Quay Container Crane (QCC)", category: "QCC", areaCode: "OGOJA", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 1.5 },
+  { id: "OJA-RMGC 01", name: "Rail Mounted Gantry Crane (RMGC)", category: "RMGC", areaCode: "OGOJA", criticality: "critical", status: "BREAKDOWN", remark: "Reported failure — needs investigation", hoursAgoSeed: 2.5 },
+  { id: "OJA-RMGC 02", name: "Rail Mounted Gantry Crane (RMGC)", category: "RMGC", areaCode: "OGOJA", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 3.5 },
+  { id: "OJA-RMGC 03", name: "Rail Mounted Gantry Crane (RMGC)", category: "RMGC", areaCode: "OGOJA", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 4.5 },
+  { id: "OJA-RMGC 04", name: "Rail Mounted Gantry Crane (RMGC)", category: "RMGC", areaCode: "OGOJA", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 5.5 },
+  { id: "OJA-RMGC 05", name: "Rail Mounted Gantry Crane (RMGC)", category: "RMGC", areaCode: "OGOJA", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 6.5 },
+  { id: "OJA-RTGC 01", name: "Rubber Tyred Gantry Crane (RTGC)", category: "RTGC", areaCode: "OGOJA", criticality: "critical", status: "MAINTENANCE", remark: "Scheduled preventive maintenance", hoursAgoSeed: 7.5 },
+  { id: "OJA-RTGC 02", name: "Rubber Tyred Gantry Crane (RTGC)", category: "RTGC", areaCode: "OGOJA", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 8.5 },
+  { id: "OJA-RS 42", name: "Container Handler (CH)", category: "CH", areaCode: "OGOJA", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 9.5 },
+  { id: "OJA-RS 43", name: "Container Handler (CH)", category: "CH", areaCode: "OGOJA", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 10.5 },
+  { id: "OJA-RS 44", name: "Container Handler (CH)", category: "CH", areaCode: "OGOJA", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 11.5 },
+  { id: "OJA-RS 45", name: "Container Handler (CH)", category: "CH", areaCode: "OGOJA", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 12.5 },
+  { id: "OJA-RS 46", name: "Container Handler (CH)", category: "CH", areaCode: "OGOJA", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 13.5 },
+  { id: "OJA-RS 47", name: "Container Handler (CH)", category: "CH", areaCode: "OGOJA", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 14.5 },
+  { id: "OJA-RS 49", name: "Container Handler (CH)", category: "CH", areaCode: "OGOJA", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 15.5 },
+  { id: "OJA-HDT 01", name: "HDT/TTR", category: "HDT", areaCode: "OGOJA", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 16.5 },
+  { id: "OJA-HDT 02", name: "HDT/TTR", category: "HDT", areaCode: "OGOJA", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 17.5 },
+  { id: "OJA-HDT 03", name: "HDT/TTR", category: "HDT", areaCode: "OGOJA", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 18.5 },
+  { id: "OJA-HDT 04", name: "HDT/TTR", category: "HDT", areaCode: "OGOJA", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 19.5 },
+  { id: "OJA-HDT 05", name: "HDT/TTR", category: "HDT", areaCode: "OGOJA", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 20.5 },
+  { id: "OJA-HDT 06", name: "HDT/TTR", category: "HDT", areaCode: "OGOJA", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 21.5 },
+  { id: "OJA-HDT 07", name: "HDT/TTR", category: "HDT", areaCode: "OGOJA", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 22.5 },
+  { id: "OJA-HDT 08", name: "HDT/TTR", category: "HDT", areaCode: "OGOJA", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 23.5 },
+  { id: "OJA-HDT 09", name: "HDT/TTR", category: "HDT", areaCode: "OGOJA", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 24.5 },
+  { id: "OJA-HDT 10", name: "HDT/TTR", category: "HDT", areaCode: "OGOJA", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 25.5 },
+  { id: "OJA-HDT 11", name: "HDT/TTR", category: "HDT", areaCode: "OGOJA", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 26.5 },
+  { id: "OJA-HDT 12", name: "HDT/TTR", category: "HDT", areaCode: "OGOJA", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 27.5 },
+  { id: "OJA-HDT 13", name: "HDT/TTR", category: "HDT", areaCode: "OGOJA", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 28.5 },
+  { id: "OJA-HDT 14", name: "HDT/TTR", category: "HDT", areaCode: "OGOJA", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 29.5 },
+  { id: "OJA-HDT 15", name: "HDT/TTR", category: "HDT", areaCode: "OGOJA", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 0.5 },
+  { id: "OJA-HDT 16", name: "HDT/TTR", category: "HDT", areaCode: "OGOJA", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 1.5 },
+  { id: "OJA-HDT 17", name: "HDT/TTR", category: "HDT", areaCode: "OGOJA", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 2.5 },
+  { id: "OJA-HDT 18", name: "HDT/TTR", category: "HDT", areaCode: "OGOJA", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 3.5 },
+  { id: "OJA-HDT 19", name: "HDT/TTR", category: "HDT", areaCode: "OGOJA", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 4.5 },
+  { id: "OJA-HDT 20", name: "HDT/TTR", category: "HDT", areaCode: "OGOJA", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 5.5 },
+  { id: "OJA-HDT 21", name: "HDT/TTR", category: "HDT", areaCode: "OGOJA", criticality: "normal", status: "READY_NOTE", remark: "Operating with minor limitation", hoursAgoSeed: 6.5 },
+  { id: "OJA-HDT 22", name: "HDT/TTR", category: "HDT", areaCode: "OGOJA", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 7.5 },
+  { id: "OJA-HDT 23", name: "HDT/TTR", category: "HDT", areaCode: "OGOJA", criticality: "normal", status: "MAINTENANCE", remark: "Scheduled preventive maintenance", hoursAgoSeed: 8.5 },
+  { id: "OJA-HDT 24", name: "HDT/TTR", category: "HDT", areaCode: "OGOJA", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 9.5 },
+  { id: "OJA-HDT 25", name: "HDT/TTR", category: "HDT", areaCode: "OGOJA", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 10.5 },
+  { id: "OJA-HDT 26", name: "HDT/TTR", category: "HDT", areaCode: "OGOJA", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 11.5 },
+  { id: "OJA-HDT 27", name: "HDT/TTR", category: "HDT", areaCode: "OGOJA", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 12.5 },
+  { id: "OJA-HDT 28", name: "HDT/TTR", category: "HDT", areaCode: "OGOJA", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 13.5 },
+  { id: "OJA-HDT 29", name: "HDT/TTR", category: "HDT", areaCode: "OGOJA", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 14.5 },
+  { id: "OJA-HDT 30", name: "HDT/TTR", category: "HDT", areaCode: "OGOJA", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 15.5 },
+  { id: "MAL-QCC 01", name: "Quay Container Crane (QCC)", category: "QCC", areaCode: "OGMAL", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 16.5 },
+  { id: "MAL-QCC 02", name: "Quay Container Crane (QCC)", category: "QCC", areaCode: "OGMAL", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 17.5 },
+  { id: "MAL-QCC 03", name: "Quay Container Crane (QCC)", category: "QCC", areaCode: "OGMAL", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 18.5 },
+  { id: "MAL-QCC 04", name: "Quay Container Crane (QCC)", category: "QCC", areaCode: "OGMAL", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 19.5 },
+  { id: "MAL-RTGC 01", name: "Rubber Tyred Gantry Crane (RTGC)", category: "RTGC", areaCode: "OGMAL", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 20.5 },
+  { id: "MAL-RTGC 02", name: "Rubber Tyred Gantry Crane (RTGC)", category: "RTGC", areaCode: "OGMAL", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 21.5 },
+  { id: "MAL-RTGC 03", name: "Rubber Tyred Gantry Crane (RTGC)", category: "RTGC", areaCode: "OGMAL", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 22.5 },
+  { id: "MAL-RTGC 04", name: "Rubber Tyred Gantry Crane (RTGC)", category: "RTGC", areaCode: "OGMAL", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 23.5 },
+  { id: "MAL-RTGC 10", name: "Rubber Tyred Gantry Crane (RTGC)", category: "RTGC", areaCode: "OGMAL", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 24.5 },
+  { id: "MAL-RTGC 21", name: "Rubber Tyred Gantry Crane (RTGC)", category: "RTGC", areaCode: "OGMAL", criticality: "critical", status: "BREAKDOWN", remark: "Reported failure — needs investigation", hoursAgoSeed: 25.5 },
+  { id: "MAL-RTGC 22", name: "Rubber Tyred Gantry Crane (RTGC)", category: "RTGC", areaCode: "OGMAL", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 26.5 },
+  { id: "MAL-SL 02", name: "Container Handler (CH)", category: "CH", areaCode: "OGMAL", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 27.5 },
+  { id: "MAL-RS 02", name: "Container Handler (CH)", category: "CH", areaCode: "OGMAL", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 28.5 },
+  { id: "PNJ-QCC 01", name: "Quay Container Crane (QCC)", category: "QCC", areaCode: "PNJ", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 29.5 },
+  { id: "PNJ-QCC 02", name: "Quay Container Crane (QCC)", category: "QCC", areaCode: "PNJ", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 0.5 },
+  { id: "PNJ-QCC 03", name: "Quay Container Crane (QCC)", category: "QCC", areaCode: "PNJ", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 1.5 },
+  { id: "PNJ-QCC 04", name: "Quay Container Crane (QCC)", category: "QCC", areaCode: "PNJ", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 2.5 },
+  { id: "PNJ-RTGC 01", name: "Rubber Tyred Gantry Crane (RTGC)", category: "RTGC", areaCode: "PNJ", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 3.5 },
+  { id: "PNJ-RTGC 02", name: "Rubber Tyred Gantry Crane (RTGC)", category: "RTGC", areaCode: "PNJ", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 4.5 },
+  { id: "PNJ-RTGC 03", name: "Rubber Tyred Gantry Crane (RTGC)", category: "RTGC", areaCode: "PNJ", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 5.5 },
+  { id: "PNJ-RTGC 04", name: "Rubber Tyred Gantry Crane (RTGC)", category: "RTGC", areaCode: "PNJ", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 6.5 },
+  { id: "PNJ-RTGC 05", name: "Rubber Tyred Gantry Crane (RTGC)", category: "RTGC", areaCode: "PNJ", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 7.5 },
+  { id: "PNJ-RS 03", name: "Container Handler (CH)", category: "CH", areaCode: "PNJ", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 8.5 },
+  { id: "PNJ-PLT 02", name: "Container Handler (CH)", category: "CH", areaCode: "PNJ", criticality: "normal", status: "MAINTENANCE", remark: "Scheduled preventive maintenance", hoursAgoSeed: 9.5 },
+  { id: "PNJ-PLT 03", name: "Container Handler (CH)", category: "CH", areaCode: "PNJ", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 10.5 },
+  { id: "PNJ-TTR 01", name: "HDT/TTR", category: "HDT", areaCode: "PNJ", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 11.5 },
+  { id: "PNJ-TTR 02", name: "HDT/TTR", category: "HDT", areaCode: "PNJ", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 12.5 },
+  { id: "PNJ-TTR 03", name: "HDT/TTR", category: "HDT", areaCode: "PNJ", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 13.5 },
+  { id: "PNJ-TTR 04", name: "HDT/TTR", category: "HDT", areaCode: "PNJ", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 14.5 },
+  { id: "PNJ-TTR 19", name: "HDT/TTR", category: "HDT", areaCode: "PNJ", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 15.5 },
+  { id: "PNJ-TTR 20", name: "HDT/TTR", category: "HDT", areaCode: "PNJ", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 16.5 },
+  { id: "PNJ-TTR 21", name: "HDT/TTR", category: "HDT", areaCode: "PNJ", criticality: "normal", status: "READY_NOTE", remark: "Operating with minor limitation", hoursAgoSeed: 17.5 },
+  { id: "PNJ-TTR 22", name: "HDT/TTR", category: "HDT", areaCode: "PNJ", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 18.5 },
+  { id: "PNJ-TTR 23", name: "HDT/TTR", category: "HDT", areaCode: "PNJ", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 19.5 },
+  { id: "PNJ-TTR 24", name: "HDT/TTR", category: "HDT", areaCode: "PNJ", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 20.5 },
+  { id: "PNJ-TTR 25", name: "HDT/TTR", category: "HDT", areaCode: "PNJ", criticality: "normal", status: "OUT_OF_SERVICE", remark: "Long-term non-operational", hoursAgoSeed: 21.5 },
+  { id: "PNJ-TTR 26", name: "HDT/TTR", category: "HDT", areaCode: "PNJ", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 22.5 },
+  { id: "PNJ-SL 02", name: "Container Handler (CH)", category: "CH", areaCode: "PNJ", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 23.5 },
+  { id: "PLM-QCC 02", name: "Quay Container Crane (QCC)", category: "QCC", areaCode: "PLM", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 24.5 },
+  { id: "PLM-QCC 03", name: "Quay Container Crane (QCC)", category: "QCC", areaCode: "PLM", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 25.5 },
+  { id: "PLM-RMGC 01", name: "Rail Mounted Gantry Crane (RMGC)", category: "RMGC", areaCode: "PLM", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 26.5 },
+  { id: "PLM-RMGC 02", name: "Rail Mounted Gantry Crane (RMGC)", category: "RMGC", areaCode: "PLM", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 27.5 },
+  { id: "PLM-RMGC 03", name: "Rail Mounted Gantry Crane (RMGC)", category: "RMGC", areaCode: "PLM", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 28.5 },
+  { id: "PLM-RMGC 04", name: "Rail Mounted Gantry Crane (RMGC)", category: "RMGC", areaCode: "PLM", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 29.5 },
+  { id: "PLM-RS 01", name: "Container Handler (CH)", category: "CH", areaCode: "PLM", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 0.5 },
+  { id: "PLM-RS 02", name: "Container Handler (CH)", category: "CH", areaCode: "PLM", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 1.5 },
+  { id: "PLM-SL 01", name: "Container Handler (CH)", category: "CH", areaCode: "PLM", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 2.5 },
+  { id: "PLM-SL 03", name: "Container Handler (CH)", category: "CH", areaCode: "PLM", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 3.5 },
+  { id: "PLM-TTR 01", name: "HDT/TTR", category: "HDT", areaCode: "PLM", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 4.5 },
+  { id: "PLM-TTR 02", name: "HDT/TTR", category: "HDT", areaCode: "PLM", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 5.5 },
+  { id: "PLM-TTR 05", name: "HDT/TTR", category: "HDT", areaCode: "PLM", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 6.5 },
+  { id: "PLM-TTR 06", name: "HDT/TTR", category: "HDT", areaCode: "PLM", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 7.5 },
+  { id: "PLM-TTR 07", name: "HDT/TTR", category: "HDT", areaCode: "PLM", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 8.5 },
+  { id: "PLM-TTR 08", name: "HDT/TTR", category: "HDT", areaCode: "PLM", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 9.5 },
+  { id: "PLM-TTR 09", name: "HDT/TTR", category: "HDT", areaCode: "PLM", criticality: "normal", status: "MAINTENANCE", remark: "Scheduled preventive maintenance", hoursAgoSeed: 10.5 },
+  { id: "PLM-TTR 15", name: "HDT/TTR", category: "HDT", areaCode: "PLM", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 11.5 },
+  { id: "PLM-TTR 16", name: "HDT/TTR", category: "HDT", areaCode: "PLM", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 12.5 },
+  { id: "PLM-TTR 17", name: "HDT/TTR", category: "HDT", areaCode: "PLM", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 13.5 },
+  { id: "PLM-TTR 18", name: "HDT/TTR", category: "HDT", areaCode: "PLM", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 14.5 },
+  { id: "PLM-TTR 19", name: "HDT/TTR", category: "HDT", areaCode: "PLM", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 15.5 },
+  { id: "PNT-QCC 03", name: "Quay Container Crane (QCC)", category: "QCC", areaCode: "PNT", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 16.5 },
+  { id: "PNT-QCC 04", name: "Quay Container Crane (QCC)", category: "QCC", areaCode: "PNT", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 17.5 },
+  { id: "PNT-GJC 01", name: "Gantry Jib Crane (GJC)", category: "GJC", areaCode: "PNT", criticality: "normal", status: "BREAKDOWN", remark: "Reported failure — needs investigation", hoursAgoSeed: 18.5 },
+  { id: "PNT-GJC 02", name: "Gantry Jib Crane (GJC)", category: "GJC", areaCode: "PNT", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 19.5 },
+  { id: "PNT-RMGC 01", name: "Rail Mounted Gantry Crane (RMGC)", category: "RMGC", areaCode: "PNT", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 20.5 },
+  { id: "PNT-RMGC 02", name: "Rail Mounted Gantry Crane (RMGC)", category: "RMGC", areaCode: "PNT", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 21.5 },
+  { id: "PNT-RMGC 03", name: "Rail Mounted Gantry Crane (RMGC)", category: "RMGC", areaCode: "PNT", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 22.5 },
+  { id: "PNT-RMGC 04", name: "Rail Mounted Gantry Crane (RMGC)", category: "RMGC", areaCode: "PNT", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 23.5 },
+  { id: "PNT-RMGC 05", name: "Rail Mounted Gantry Crane (RMGC)", category: "RMGC", areaCode: "PNT", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 24.5 },
+  { id: "PNT-RMGC 06", name: "Rail Mounted Gantry Crane (RMGC)", category: "RMGC", areaCode: "PNT", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 25.5 },
+  { id: "PNT-RMGC 07", name: "Rail Mounted Gantry Crane (RMGC)", category: "RMGC", areaCode: "PNT", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 26.5 },
+  { id: "PNT-RMGC 08", name: "Rail Mounted Gantry Crane (RMGC)", category: "RMGC", areaCode: "PNT", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 27.5 },
+  { id: "PNT-RS 001", name: "Container Handler (CH)", category: "CH", areaCode: "PNT", criticality: "normal", status: "READY_NOTE", remark: "Operating with minor limitation", hoursAgoSeed: 28.5 },
+  { id: "PNT-RS 01", name: "Container Handler (CH)", category: "CH", areaCode: "PNT", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 29.5 },
+  { id: "PNT-SL 01", name: "Container Handler (CH)", category: "CH", areaCode: "PNT", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 0.5 },
+  { id: "PNT-TTR 12", name: "HDT/TTR", category: "HDT", areaCode: "PNT", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 1.5 },
+  { id: "PNT-TTR 13", name: "HDT/TTR", category: "HDT", areaCode: "PNT", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 2.5 },
+  { id: "PNT-TTR 14", name: "HDT/TTR", category: "HDT", areaCode: "PNT", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 3.5 },
+  { id: "PNT-TTR 15", name: "HDT/TTR", category: "HDT", areaCode: "PNT", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 4.5 },
+  { id: "PNT-TTR 16", name: "HDT/TTR", category: "HDT", areaCode: "PNT", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 5.5 },
+  { id: "PNT-TTR 17", name: "HDT/TTR", category: "HDT", areaCode: "PNT", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 6.5 },
+  { id: "PNT-TTR 18", name: "HDT/TTR", category: "HDT", areaCode: "PNT", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 7.5 },
+  { id: "PNT-TTR 19", name: "HDT/TTR", category: "HDT", areaCode: "PNT", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 8.5 },
+  { id: "PNT-TTR 20", name: "HDT/TTR", category: "HDT", areaCode: "PNT", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 9.5 },
+  { id: "PNT-TTR 26", name: "HDT/TTR", category: "HDT", areaCode: "PNT", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 10.5 },
+  { id: "PNT-TTR 27", name: "HDT/TTR", category: "HDT", areaCode: "PNT", criticality: "normal", status: "MAINTENANCE", remark: "Scheduled preventive maintenance", hoursAgoSeed: 11.5 },
+  { id: "PNT-TTR 28", name: "HDT/TTR", category: "HDT", areaCode: "PNT", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 12.5 },
+  { id: "PNT-TTR 29", name: "HDT/TTR", category: "HDT", areaCode: "PNT", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 13.5 },
+  { id: "PNT-TTR 30", name: "HDT/TTR", category: "HDT", areaCode: "PNT", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 14.5 },
+  { id: "TLBYR-GLC 01", name: "Gantry Luffing Crane (GLC)", category: "GLC", areaCode: "TLBYR", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 15.5 },
+  { id: "TLBYR-GLC 02", name: "Gantry Luffing Crane (GLC)", category: "GLC", areaCode: "TLBYR", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 16.5 },
+  { id: "TLBYR-GLC 03", name: "Gantry Luffing Crane (GLC)", category: "GLC", areaCode: "TLBYR", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 17.5 },
+  { id: "TLBYR-GLC 04", name: "Gantry Luffing Crane (GLC)", category: "GLC", areaCode: "TLBYR", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 18.5 },
+  { id: "TLBYR-RTGC 01", name: "Rubber Tyred Gantry Crane (RTGC)", category: "RTGC", areaCode: "TLBYR", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 19.5 },
+  { id: "TLBYR-RTGC 02", name: "Rubber Tyred Gantry Crane (RTGC)", category: "RTGC", areaCode: "TLBYR", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 20.5 },
+  { id: "TLBYR-RTGC 03", name: "Rubber Tyred Gantry Crane (RTGC)", category: "RTGC", areaCode: "TLBYR", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 21.5 },
+  { id: "TLBYR-RS 02", name: "Container Handler (CH)", category: "CH", areaCode: "TLBYR", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 22.5 },
+  { id: "TLBYR-RS 03", name: "Container Handler (CH)", category: "CH", areaCode: "TLBYR", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 23.5 },
+  { id: "TLBYR-FLT 07", name: "Container Handler (CH)", category: "CH", areaCode: "TLBYR", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 24.5 },
+  { id: "TLBYR-HDT 09", name: "HDT/TTR", category: "HDT", areaCode: "TLBYR", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 25.5 },
+  { id: "TLBYR-TTR 12", name: "HDT/TTR", category: "HDT", areaCode: "TLBYR", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 26.5 },
+  { id: "TLBYR-TTR 14", name: "HDT/TTR", category: "HDT", areaCode: "TLBYR", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 27.5 },
+  { id: "TLBYR-TTR 16", name: "HDT/TTR", category: "HDT", areaCode: "TLBYR", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 28.5 },
+  { id: "TLBYR-HDT 06", name: "HDT/TTR", category: "HDT", areaCode: "TLBYR", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 29.5 },
+  { id: "TLBYR-HDT 10", name: "HDT/TTR", category: "HDT", areaCode: "TLBYR", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 0.5 },
+  { id: "TLBYR-HDT 07", name: "HDT/TTR", category: "HDT", areaCode: "TLBYR", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 1.5 },
+  { id: "TLBYR-HDT 08", name: "HDT/TTR", category: "HDT", areaCode: "TLBYR", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 2.5 },
+  { id: "TLBYR-TTR 13", name: "HDT/TTR", category: "HDT", areaCode: "TLBYR", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 3.5 },
+  { id: "JMBI-FJB 01", name: "Forklift Jumbo (FJB)", category: "FJB", areaCode: "JMBI", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 4.5 },
+  { id: "JMBI-FJB 02", name: "Forklift Jumbo (FJB)", category: "FJB", areaCode: "JMBI", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 5.5 },
+  { id: "JMBI-RMGC 01", name: "Rail Mounted Gantry Crane (RMGC)", category: "RMGC", areaCode: "JMBI", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 6.5 },
+  { id: "JMBI-RMGC 02", name: "Rail Mounted Gantry Crane (RMGC)", category: "RMGC", areaCode: "JMBI", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 7.5 },
+  { id: "JMBI-RMGC 03", name: "Rail Mounted Gantry Crane (RMGC)", category: "RMGC", areaCode: "JMBI", criticality: "critical", status: "READY", remark: "-", hoursAgoSeed: 8.5 },
+  { id: "JMBI-RS 01", name: "Container Handler (CH)", category: "CH", areaCode: "JMBI", criticality: "normal", status: "READY_NOTE", remark: "Operating with minor limitation", hoursAgoSeed: 9.5 },
+  { id: "JMBI-SIL 01", name: "Container Handler (CH)", category: "CH", areaCode: "JMBI", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 10.5 },
+  { id: "JMBI-FLT 06", name: "Container Handler (CH)", category: "CH", areaCode: "JMBI", criticality: "normal", status: "BREAKDOWN", remark: "Reported failure — needs investigation", hoursAgoSeed: 11.5 },
+  { id: "JMBI-FLT 08", name: "Container Handler (CH)", category: "CH", areaCode: "JMBI", criticality: "normal", status: "MAINTENANCE", remark: "Scheduled preventive maintenance", hoursAgoSeed: 12.5 },
+  { id: "JMBI-FLT 09", name: "Container Handler (CH)", category: "CH", areaCode: "JMBI", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 13.5 },
+  { id: "JMBI-FLT 10", name: "Container Handler (CH)", category: "CH", areaCode: "JMBI", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 14.5 },
+  { id: "JMBI-FLT 11", name: "Container Handler (CH)", category: "CH", areaCode: "JMBI", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 15.5 },
+  { id: "JMBI-FLT 12", name: "Container Handler (CH)", category: "CH", areaCode: "JMBI", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 16.5 },
+  { id: "JMBI-RS 02", name: "Container Handler (CH)", category: "CH", areaCode: "JMBI", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 17.5 },
+  { id: "JMBI-HDT 03", name: "HDT/TTR", category: "HDT", areaCode: "JMBI", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 18.5 },
+  { id: "JMBI-HDT 04", name: "HDT/TTR", category: "HDT", areaCode: "JMBI", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 19.5 },
+  { id: "JMBI-HDT 05", name: "HDT/TTR", category: "HDT", areaCode: "JMBI", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 20.5 },
+  { id: "JMBI-HDT 06", name: "HDT/TTR", category: "HDT", areaCode: "JMBI", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 21.5 },
+  { id: "JMBI-HDT 07", name: "HDT/TTR", category: "HDT", areaCode: "JMBI", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 22.5 },
+  { id: "JMBI-HDT 08", name: "HDT/TTR", category: "HDT", areaCode: "JMBI", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 23.5 },
+  { id: "JMBI-HDT 09", name: "HDT/TTR", category: "HDT", areaCode: "JMBI", criticality: "normal", status: "READY", remark: "-", hoursAgoSeed: 24.5 }
+];
 
-  return list.map((eq) => {
-    let status = "READY", remark = "-", lastUpdate = hoursAgo(1);
-    if (eq.id === "QCC-01") { status = "READY_NOTE"; remark = "Trolley repair / operational note"; lastUpdate = hoursAgo(0.6); }
-    if (eq.id === "QCC-06") { status = "BREAKDOWN"; remark = "Capacitor Main Hoist Failure"; lastUpdate = hoursAgo(0.3); }
-    if (eq.id === "RTG-03") { status = "MAINTENANCE"; remark = "Scheduled preventive maintenance"; lastUpdate = hoursAgo(3); }
-    if (eq.id === "HDT-03") { status = "OUT_OF_SERVICE"; remark = "Long-term non-operational, awaiting parts"; lastUpdate = hoursAgo(48); }
-    return { ...eq, status, remark, lastUpdate, updatedBy: "System (seed)", active: true };
+// Real baseline imported from "Profile Alat Alat IPC TPK.xlsx" — 384 equipment / 13 operational areas.
+function generateEquipmentBaseline() {
+  return REAL_EQUIPMENT_BASELINE.map((e) => ({
+    id: e.id,
+    name: e.name,
+    category: e.category,
+    areaCode: e.areaCode,
+    criticality: e.criticality,
+    status: e.status,
+    remark: e.remark,
+    lastUpdate: hoursAgo(e.hoursAgoSeed),
+    updatedBy: "System (baseline import — Profile Alat Alat IPC TPK.xlsx)",
+    active: true,
+  }));
+}
+
+function seedIncidents(equipment) {
+  const bd = equipment.filter((e) => e.status === "BREAKDOWN");
+  return bd.map((eq, i) => ({
+    id: `INC-${String(i + 1).padStart(4, "0")}`,
+    equipmentId: eq.id,
+    problemCategory: "Electrical",
+    problem: eq.remark,
+    pic: "Maintenance Team",
+    eta: i % 2 === 0 ? hoursAgo(2.5) : hoursAgo(-4),
+    startTime: hoursAgo(6 + i * 3),
+    endTime: null,
+    status: "open",
+    updates: [{ timestamp: hoursAgo(1), user: "Area Admin", note: "Investigation in progress" }],
+  }));
+}
+
+function seedHistory(equipment) {
+  return equipment
+    .filter((e) => e.status !== "READY")
+    .map((eq, i) => ({
+      id: `H-${String(i + 1).padStart(4, "0")}`,
+      equipmentId: eq.id,
+      areaCode: eq.areaCode,
+      eventType: "STATUS_CHANGE",
+      from: "READY",
+      to: eq.status,
+      timestamp: eq.lastUpdate,
+      user: "Area Admin",
+      remark: eq.remark,
+    }));
+}
+
+function seedUsers() {
+  const users = [];
+  // "4 admin area" areas each get 4 named admin accounts
+  AREAS.filter((a) => a.adminModel === "4 admin area").forEach((a) => {
+    for (let n = 1; n <= 4; n++) {
+      users.push({
+        id: `U-${a.code}-${n}`,
+        name: `Admin ${a.name} #${n}`,
+        username: `${a.code}_admin${n}`,
+        tempPassword: `Ipctpk#${a.code}${n}26`,
+        mustChangePassword: true,
+        role: "AREA_ADMIN",
+        areas: [a.code],
+      });
+    }
   });
+  // Shared admin groups per PRD §6 examples: TMS admins also cover MSA; OJA admins also cover TSJ + MAL
+  const SHARED_MAP = { DMSMSA: "DMSTMS", OGTSJ: "OGOJA", OGMAL: "OGOJA" };
+  Object.entries(SHARED_MAP).forEach(([sharedCode, hostCode]) => {
+    users.forEach((u) => { if (u.areas.includes(hostCode) && !u.areas.includes(sharedCode)) u.areas.push(sharedCode); });
+  });
+  // Non-area-scoped roles
+  users.push({ id: "U-SYSADMIN-1", name: "System Administrator", username: "sysadmin", tempPassword: "Ipctpk#SysAdmin26", mustChangePassword: true, role: "SYSTEM_ADMIN", areas: AREAS.map((a) => a.code) });
+  users.push({ id: "U-MGMT-1", name: "Management Viewer", username: "management.viewer", tempPassword: "Ipctpk#Mgmt26", mustChangePassword: true, role: "MANAGEMENT_VIEWER", areas: AREAS.map((a) => a.code) });
+  return users;
 }
 
-function seedIncidents() {
+function seedCategories() { return CATEGORY_LIST.map((c) => ({ code: c, active: true })); }
+function seedSubAreas() {
+  // A few illustrative examples — System Admin manages the real list per PRD §C (Manual Master Data Management)
   return [
-    {
-      id: "INC-0001",
-      equipmentId: "QCC-06",
-      problemCategory: "Electrical",
-      problem: "Capacitor Main Hoist Failure",
-      pic: "Electrical Maintenance Team",
-      eta: hoursAgo(2.7), // target recovery already ~2h42m in the past -> shows as OVERDUE
-      startTime: hoursAgo(14),
-      endTime: null,
-      status: "open",
-      updates: [
-        { timestamp: hoursAgo(10), user: "Admin On Duty", note: "Capacitor replacement ongoing" },
-        { timestamp: hoursAgo(0.3), user: "Admin On Duty", note: "Waiting on replacement part delivery" },
-      ],
-    },
+    { id: "SA-1", areaCode: "PNJ", name: "Dermaga 1", active: true },
+    { id: "SA-2", areaCode: "PNJ", name: "Yard Utara", active: true },
+    { id: "SA-3", areaCode: "OGOJA", name: "Terminal A", active: true },
   ];
 }
-
-function seedHistory() {
+function seedShifts() {
   return [
-    { id: "H-0001", equipmentId: "QCC-06", from: "READY", to: "BREAKDOWN", timestamp: hoursAgo(14), user: "Admin On Duty", remark: "Capacitor Main Hoist Failure" },
-    { id: "H-0002", equipmentId: "QCC-01", from: "READY", to: "READY_NOTE", timestamp: hoursAgo(0.6), user: "Admin On Duty", remark: "Trolley repair / operational note" },
-    { id: "H-0003", equipmentId: "RTG-03", from: "READY", to: "MAINTENANCE", timestamp: hoursAgo(3), user: "Admin On Duty", remark: "Scheduled preventive maintenance" },
+    { id: "S1", name: "Shift 1", hours: "06:00–14:00" },
+    { id: "S2", name: "Shift 2", hours: "14:00–22:00" },
+    { id: "S3", name: "Shift 3", hours: "22:00–06:00" },
   ];
 }
 
 /* ---------------------------------------------------------------------- */
-/* Small utilities                                                         */
+/* Utilities                                                                */
 /* ---------------------------------------------------------------------- */
 
 function fmtDateTime(iso) {
@@ -192,56 +649,25 @@ function fmtDateTime(iso) {
   const months = ["Jan","Feb","Mar","Apr","May","Jun","Jul","Aug","Sep","Oct","Nov","Dec"];
   const hh = String(d.getHours()).padStart(2, "0");
   const mm = String(d.getMinutes()).padStart(2, "0");
-  return `${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()} - ${hh}:${mm}`;
+  return `${d.getDate()} ${months[d.getMonth()]} ${d.getFullYear()} ${hh}:${mm}`;
 }
-
 function fmtDuration(ms) {
   if (ms < 0) ms = 0;
   const totalMin = Math.floor(ms / 60000);
-  const h = Math.floor(totalMin / 60);
-  const m = totalMin % 60;
-  return `${h}h ${m}m`;
+  return `${Math.floor(totalMin / 60)}h ${totalMin % 60}m`;
 }
-
-function fmtAgo(iso, now) {
-  const diff = now - new Date(iso).getTime();
-  if (diff < 60000) return "just now";
-  const min = Math.floor(diff / 60000);
-  if (min < 60) return `${min}m ago`;
-  const h = Math.floor(min / 60);
-  const m = min % 60;
-  return `${h}h ${m}m ago`;
-}
-
-function uid(prefix) {
-  return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`;
-}
-
-/* ---------------------------------------------------------------------- */
-/* Storage layer                                                           */
-/* ---------------------------------------------------------------------- */
+function uid(prefix) { return `${prefix}-${Date.now().toString(36)}-${Math.random().toString(36).slice(2, 6)}`; }
 
 async function loadKey(key, fallback) {
   try {
     const res = await window.storage.get(key, true);
     if (res && res.value) return JSON.parse(res.value);
     return fallback;
-  } catch {
-    return fallback;
-  }
+  } catch { return fallback; }
 }
-
 async function saveKey(key, value) {
-  try {
-    await window.storage.set(key, JSON.stringify(value), true);
-  } catch (e) {
-    console.error("storage save failed", key, e);
-  }
+  try { await window.storage.set(key, JSON.stringify(value), true); } catch (e) { console.error("storage save failed", key, e); }
 }
-
-/* ---------------------------------------------------------------------- */
-/* Priority / Need Attention logic                                         */
-/* ---------------------------------------------------------------------- */
 
 function getPriority(eq, incident, now) {
   if (!incident || incident.status !== "open") return null;
@@ -249,27 +675,75 @@ function getPriority(eq, incident, now) {
   const downtimeMs = now - start;
   const downtimeH = downtimeMs / 3600000;
   const etaExceeded = incident.eta && now > new Date(incident.eta).getTime();
-
-  const lastActivity = incident.updates.length
-    ? new Date(incident.updates[incident.updates.length - 1].timestamp).getTime()
-    : start;
-  const staleH = (now - lastActivity) / 3600000;
-  const stale = staleH > 2;
+  const lastActivity = incident.updates.length ? new Date(incident.updates[incident.updates.length - 1].timestamp).getTime() : start;
+  const stale = (now - lastActivity) / 3600000 > 2;
 
   let level = "HIGH";
   if (downtimeH > 8 || etaExceeded || eq.criticality === "critical") level = "CRITICAL";
-  else if (downtimeH > 4) level = "HIGH";
-
   const flags = [];
   if (etaExceeded) flags.push("ETA OVERDUE");
   if (stale) flags.push("STALE UPDATE");
   if (eq.criticality === "critical") flags.push("CRITICAL EQUIPMENT");
-
   return { level, flags, downtimeMs, stale, etaExceeded };
 }
 
+function areaName(code) { return AREAS.find((a) => a.code === code)?.name || code; }
+function subAreaName(subAreas, id) { if (!id) return null; return subAreas.find((s) => s.id === id)?.name || null; }
+
 /* ---------------------------------------------------------------------- */
-/* Status badge / dot                                                      */
+/* Photo compression (client-side, keeps localStorage usage small)         */
+/* ---------------------------------------------------------------------- */
+
+function compressImageFile(file, maxWidth = 640, quality = 0.6) {
+  return new Promise((resolve, reject) => {
+    const reader = new FileReader();
+    reader.onerror = () => reject(new Error("read failed"));
+    reader.onload = () => {
+      const img = new window.Image();
+      img.onerror = () => reject(new Error("decode failed"));
+      img.onload = () => {
+        const scale = Math.min(1, maxWidth / img.width);
+        const canvas = document.createElement("canvas");
+        canvas.width = Math.round(img.width * scale);
+        canvas.height = Math.round(img.height * scale);
+        const ctx = canvas.getContext("2d");
+        ctx.drawImage(img, 0, 0, canvas.width, canvas.height);
+        resolve(canvas.toDataURL("image/jpeg", quality));
+      };
+      img.src = reader.result;
+    };
+    reader.readAsDataURL(file);
+  });
+}
+
+/* ---------------------------------------------------------------------- */
+/* Excel export/import (SheetJS)                                           */
+/* ---------------------------------------------------------------------- */
+
+function exportRowsToExcel(filename, sheetName, rows) {
+  const ws = XLSX.utils.json_to_sheet(rows);
+  const wb = XLSX.utils.book_new();
+  XLSX.utils.book_append_sheet(wb, ws, sheetName);
+  const buf = XLSX.write(wb, { bookType: "xlsx", type: "array" });
+  const blob = new Blob([buf], { type: "application/octet-stream" });
+  const url = URL.createObjectURL(blob);
+  const a = document.createElement("a");
+  a.href = url; a.download = filename;
+  document.body.appendChild(a); a.click(); document.body.removeChild(a);
+  URL.revokeObjectURL(url);
+}
+
+function pick(row, keys) {
+  for (const k of keys) {
+    for (const rk of Object.keys(row)) {
+      if (rk.toLowerCase().replace(/[\s_]/g, "") === k.toLowerCase().replace(/[\s_]/g, "")) return row[rk];
+    }
+  }
+  return undefined;
+}
+
+/* ---------------------------------------------------------------------- */
+/* Status UI atoms                                                         */
 /* ---------------------------------------------------------------------- */
 
 function StatusDot({ status, pulse }) {
@@ -281,15 +755,35 @@ function StatusDot({ status, pulse }) {
     </span>
   );
 }
-
 function StatusBadge({ status, size = "sm" }) {
   const s = STATUS[status];
   const pad = size === "lg" ? "px-3 py-1.5 text-sm" : "px-2 py-1 text-[11px]";
   return (
     <span className={`inline-flex items-center gap-1.5 rounded-md ${s.soft} ${s.text} ${pad} font-mono font-medium tracking-wide ring-1 ${s.ring}`}>
-      <StatusDot status={status} pulse={status === "BREAKDOWN"} />
-      {s.label}
+      <StatusDot status={status} pulse={status === "BREAKDOWN"} />{s.label}
     </span>
+  );
+}
+function Info({ label, value, warn }) {
+  return (
+    <div>
+      <div className="text-[10px] text-slate-500 uppercase tracking-wide">{label}</div>
+      <div className={`font-mono ${warn ? "text-red-400" : "text-slate-200"}`}>{value}</div>
+    </div>
+  );
+}
+function Modal({ title, onClose, children, wide }) {
+  return (
+    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
+      <div className="absolute inset-0 bg-black/70" onClick={onClose} />
+      <div className={`relative w-full ${wide ? "max-w-2xl" : "max-w-md"} bg-slate-950 border border-slate-800 rounded-xl shadow-2xl max-h-[90vh] overflow-y-auto`}>
+        <div className="sticky top-0 bg-slate-950 border-b border-slate-800 px-4 py-3 flex items-center justify-between">
+          <h3 className="text-sm font-semibold text-slate-100">{title}</h3>
+          <button onClick={onClose} className="text-slate-500 hover:text-slate-200"><X size={18} /></button>
+        </div>
+        <div className="p-4">{children}</div>
+      </div>
+    </div>
   );
 }
 
@@ -304,39 +798,55 @@ function App() {
   const [history, setHistory] = useState([]);
   const [handovers, setHandovers] = useState([]);
   const [audit, setAudit] = useState([]);
+  const [categories, setCategories] = useState([]);
+  const [users, setUsers] = useState([]);
+  const [shifts, setShifts] = useState([]);
+  const [subAreas, setSubAreas] = useState([]);
 
-  const [role, setRole] = useState("admin");
-  const [tab, setTab] = useState("tower");
+  // --- simulated session (no real backend/auth — see banner) ---
+  const [role, setRole] = useState("AREA_ADMIN");
+  const [assignedAreas, setAssignedAreas] = useState(["PNJ"]);
+  const [tab, setTab] = useState(ROLES.AREA_ADMIN.home);
   const [now, setNow] = useState(Date.now());
+  const [sessionOpen, setSessionOpen] = useState(false);
+  const [mobileNavOpen, setMobileNavOpen] = useState(false);
 
   const [selectedId, setSelectedId] = useState(null);
   const [updateModalEq, setUpdateModalEq] = useState(null);
   const [addEqOpen, setAddEqOpen] = useState(false);
   const [handoverOpen, setHandoverOpen] = useState(false);
+  const [printData, setPrintData] = useState(null);
 
-  useEffect(() => {
-    const t = setInterval(() => setNow(Date.now()), 60000);
-    return () => clearInterval(t);
-  }, []);
+  function triggerPrint(title, columns, rows) {
+    setPrintData({ title, columns, rows });
+    setTimeout(() => window.print(), 150);
+  }
+
+  useEffect(() => { const t = setInterval(() => setNow(Date.now()), 60000); return () => clearInterval(t); }, []);
 
   useEffect(() => {
     (async () => {
-      const seedEq = seedEquipment();
-      const seedInc = seedIncidents();
-      const seedHist = seedHistory();
-
-      const [eq, inc, hist, ho, aud] = await Promise.all([
+      const seedEq = generateEquipmentBaseline();
+      const [eq, inc, hist, ho, aud, cats, usrs, shf, subs] = await Promise.all([
         loadKey(STORAGE_KEYS.equipment, seedEq),
-        loadKey(STORAGE_KEYS.incidents, seedInc),
-        loadKey(STORAGE_KEYS.history, seedHist),
+        loadKey(STORAGE_KEYS.incidents, null),
+        loadKey(STORAGE_KEYS.history, null),
         loadKey(STORAGE_KEYS.handovers, []),
         loadKey(STORAGE_KEYS.audit, []),
+        loadKey(STORAGE_KEYS.categories, seedCategories()),
+        loadKey(STORAGE_KEYS.users, seedUsers()),
+        loadKey(STORAGE_KEYS.shifts, seedShifts()),
+        loadKey(STORAGE_KEYS.subAreas, seedSubAreas()),
       ]);
       setEquipment(eq);
-      setIncidents(inc);
-      setHistory(hist);
+      setIncidents(inc || seedIncidents(eq));
+      setHistory(hist || seedHistory(eq));
       setHandovers(ho);
       setAudit(aud);
+      setCategories(cats);
+      setUsers(usrs);
+      setShifts(shf);
+      setSubAreas(subs);
       setLoading(false);
     })();
   }, []);
@@ -346,11 +856,18 @@ function App() {
   const persistHistory = useCallback((next) => { setHistory(next); saveKey(STORAGE_KEYS.history, next); }, []);
   const persistHandovers = useCallback((next) => { setHandovers(next); saveKey(STORAGE_KEYS.handovers, next); }, []);
   const persistAudit = useCallback((next) => { setAudit(next); saveKey(STORAGE_KEYS.audit, next); }, []);
+  const persistCategories = useCallback((next) => { setCategories(next); saveKey(STORAGE_KEYS.categories, next); }, []);
+  const persistUsers = useCallback((next) => { setUsers(next); saveKey(STORAGE_KEYS.users, next); }, []);
+  const persistSubAreas = useCallback((next) => { setSubAreas(next); saveKey(STORAGE_KEYS.subAreas, next); }, []);
 
   const addAudit = useCallback((action, target, detail) => {
-    const entry = { id: uid("AUD"), timestamp: new Date().toISOString(), user: ROLES[role].label, action, target, detail };
-    persistAudit([entry, ...audit].slice(0, 500));
-  }, [audit, role, persistAudit]);
+    const entry = { id: uid("AUD"), timestamp: new Date().toISOString(), user: `${ROLES[role].label}`, action, target, detail };
+    setAudit((prev) => { const next = [entry, ...prev].slice(0, 800); saveKey(STORAGE_KEYS.audit, next); return next; });
+  }, [role]);
+
+  // ---- access scope: this is CLIENT-SIDE SIMULATION ONLY ----
+  const scopedAreaCodes = ROLES[role].scoped ? assignedAreas : AREAS.map((a) => a.code);
+  const scopedEquipment = useMemo(() => equipment.filter((e) => scopedAreaCodes.includes(e.areaCode) && e.active !== false), [equipment, scopedAreaCodes]);
 
   const openIncidentByEq = useMemo(() => {
     const map = {};
@@ -359,68 +876,52 @@ function App() {
   }, [incidents]);
 
   const needAttention = useMemo(() => {
-    return equipment
-      .map((eq) => {
-        const inc = openIncidentByEq[eq.id];
-        const p = getPriority(eq, inc, now);
-        return p ? { eq, inc, ...p } : null;
-      })
+    return scopedEquipment
+      .map((eq) => { const inc = openIncidentByEq[eq.id]; const p = getPriority(eq, inc, now); return p ? { eq, inc, ...p } : null; })
       .filter(Boolean)
       .sort((a, b) => (a.level === b.level ? b.downtimeMs - a.downtimeMs : a.level === "CRITICAL" ? -1 : 1));
-  }, [equipment, openIncidentByEq, now]);
+  }, [scopedEquipment, openIncidentByEq, now]);
 
-  const activeEq = equipment.filter((e) => e.active !== false);
   const counts = {
-    total: activeEq.length,
-    READY: activeEq.filter((e) => e.status === "READY").length,
-    READY_NOTE: activeEq.filter((e) => e.status === "READY_NOTE").length,
-    MAINTENANCE: activeEq.filter((e) => e.status === "MAINTENANCE").length,
-    BREAKDOWN: activeEq.filter((e) => e.status === "BREAKDOWN").length,
-    OUT_OF_SERVICE: activeEq.filter((e) => e.status === "OUT_OF_SERVICE").length,
+    total: scopedEquipment.length,
+    READY: scopedEquipment.filter((e) => e.status === "READY").length,
+    READY_NOTE: scopedEquipment.filter((e) => e.status === "READY_NOTE").length,
+    MAINTENANCE: scopedEquipment.filter((e) => e.status === "MAINTENANCE").length,
+    BREAKDOWN: scopedEquipment.filter((e) => e.status === "BREAKDOWN").length,
+    OUT_OF_SERVICE: scopedEquipment.filter((e) => e.status === "OUT_OF_SERVICE").length,
   };
-  const readiness = activeEq.length ? Math.round((counts.READY / activeEq.length) * 100) : 0;
+  const readiness = scopedEquipment.length ? Math.round((counts.READY / scopedEquipment.length) * 100) : 0;
+
+  const areaMatrix = useMemo(() => AREAS
+    .filter((a) => scopedAreaCodes.includes(a.code))
+    .map((a) => {
+      const list = equipment.filter((e) => e.areaCode === a.code && e.active !== false);
+      const ready = list.filter((e) => e.status === "READY").length;
+      const bd = list.filter((e) => e.status === "BREAKDOWN").length;
+      return { ...a, total: list.length, ready, breakdown: bd, readiness: list.length ? Math.round((ready / list.length) * 100) : 0 };
+    }), [equipment, scopedAreaCodes]);
 
   /* ---------------- actions ---------------- */
 
-  function applyStatusChange({ eq, newStatus, remark, problemCategory, pic, eta, photoNote }) {
+  function applyStatusChange({ eq, newStatus, remark, problemCategory, pic, eta, photoUrl }) {
     const timestamp = new Date().toISOString();
     const userLabel = ROLES[role].label;
-
-    // status history
-    const histEntry = { id: uid("H"), equipmentId: eq.id, from: eq.status, to: newStatus, timestamp, user: userLabel, remark: remark || "-" };
+    const histEntry = { id: uid("H"), equipmentId: eq.id, areaCode: eq.areaCode, eventType: "STATUS_CHANGE", from: eq.status, to: newStatus, timestamp, user: userLabel, remark: remark || "-", photoUrl: photoUrl || null };
     persistHistory([histEntry, ...history]);
 
     let nextIncidents = incidents;
     const openInc = openIncidentByEq[eq.id];
-
     if (newStatus === "BREAKDOWN" && eq.status !== "BREAKDOWN") {
-      const inc = {
-        id: uid("INC"),
-        equipmentId: eq.id,
-        problemCategory: problemCategory || "General",
-        problem: remark || "Unspecified issue",
-        pic: pic || "Unassigned",
-        eta: eta || null,
-        startTime: timestamp,
-        endTime: null,
-        status: "open",
-        updates: photoNote ? [{ timestamp, user: userLabel, note: photoNote }] : [],
-      };
+      const inc = { id: uid("INC"), equipmentId: eq.id, problemCategory: problemCategory || "General", problem: remark || "Unspecified issue", pic: pic || "Unassigned", eta: eta || null, startTime: timestamp, endTime: null, status: "open", updates: [] };
       nextIncidents = [inc, ...incidents];
       addAudit("Incident created", eq.id, `${inc.id}: ${inc.problem}`);
     } else if (eq.status === "BREAKDOWN" && newStatus === "READY" && openInc) {
       const downtimeMinutes = Math.round((new Date(timestamp) - new Date(openInc.startTime)) / 60000);
       nextIncidents = incidents.map((i) => i.id === openInc.id ? { ...i, status: "closed", endTime: timestamp, downtimeMinutes } : i);
       addAudit("Incident closed", eq.id, `${openInc.id}: downtime ${fmtDuration(downtimeMinutes * 60000)}`);
-    } else if (eq.status === "BREAKDOWN" && newStatus === "BREAKDOWN" && openInc) {
-      // progress update without changing current status handled separately (addProgress)
     }
-
     persistIncidents(nextIncidents);
-
-    const nextEq = equipment.map((e) => e.id === eq.id ? { ...e, status: newStatus, remark: remark || e.remark, lastUpdate: timestamp, updatedBy: userLabel } : e);
-    persistEquipment(nextEq);
-
+    persistEquipment(equipment.map((e) => e.id === eq.id ? { ...e, status: newStatus, remark: remark || e.remark, lastUpdate: timestamp, updatedBy: userLabel } : e));
     addAudit("Status changed", eq.id, `${STATUS[eq.status].label} → ${STATUS[newStatus].label}`);
     setUpdateModalEq(null);
   }
@@ -429,17 +930,15 @@ function App() {
     const inc = openIncidentByEq[eq.id];
     if (!inc) return;
     const timestamp = new Date().toISOString();
-    const nextIncidents = incidents.map((i) => i.id === inc.id ? { ...i, updates: [...i.updates, { timestamp, user: ROLES[role].label, note }] } : i);
-    persistIncidents(nextIncidents);
-    const nextEq = equipment.map((e) => e.id === eq.id ? { ...e, lastUpdate: timestamp } : e);
-    persistEquipment(nextEq);
+    persistIncidents(incidents.map((i) => i.id === inc.id ? { ...i, updates: [...i.updates, { timestamp, user: ROLES[role].label, note }] } : i));
+    persistEquipment(equipment.map((e) => e.id === eq.id ? { ...e, lastUpdate: timestamp } : e));
     addAudit("Progress update", eq.id, note);
   }
 
   function addEquipment(newEq) {
     const entry = { ...newEq, status: "READY", remark: "-", lastUpdate: new Date().toISOString(), updatedBy: ROLES[role].label, active: true };
     persistEquipment([entry, ...equipment]);
-    addAudit("Equipment created", entry.id, `${entry.name} (${entry.category}/${entry.subArea})`);
+    addAudit("Equipment created", entry.id, `${entry.name} (${entry.category}/${entry.areaCode})`);
     setAddEqOpen(false);
   }
 
@@ -450,241 +949,410 @@ function App() {
     setHandoverOpen(false);
   }
 
+  function addCategory(code) {
+    const next = [{ code, active: true }, ...categories];
+    persistCategories(next);
+    addAudit("Equipment category created", code, "");
+  }
+
+  function addUser(u) {
+    const entry = { id: uid("U"), ...u };
+    persistUsers([entry, ...users]);
+    addAudit("User created", entry.name, `role: ${entry.role}, areas: ${entry.areas.join(", ")}`);
+  }
+
+  function addSubArea(areaCode, name) {
+    const entry = { id: uid("SA"), areaCode, name, active: true };
+    persistSubAreas([entry, ...subAreas]);
+    addAudit("Sub area created", name, `area: ${areaName(areaCode)}`);
+  }
+
+  // Import Equipment Master from Excel/CSV — PRD FR-004 / real baseline data source
+  function importEquipmentFromRows(rows) {
+    const areaCodeSet = new Set(AREAS.map((a) => a.code));
+    let created = 0, updated = 0, skipped = 0;
+    const byId = new Map(equipment.map((e) => [e.id, e]));
+    rows.forEach((row) => {
+      const code = pick(row, ["equipmentcode", "equipmentid", "code"]);
+      const areaCode = pick(row, ["areacode", "area"]);
+      const name = pick(row, ["equipmentname", "name"]) || code;
+      const category = pick(row, ["category", "equipmentcategory"]) || "OTHER";
+      const criticalityRaw = String(pick(row, ["criticality"]) || "normal").toLowerCase();
+      const criticality = ["critical", "high", "normal"].includes(criticalityRaw) ? criticalityRaw : "normal";
+      if (!code || !areaCode || !areaCodeSet.has(String(areaCode).toUpperCase())) { skipped++; return; }
+      const id = String(code).trim();
+      const ac = String(areaCode).trim().toUpperCase();
+      if (byId.has(id)) {
+        const prev = byId.get(id);
+        byId.set(id, { ...prev, name: String(name).trim(), category: String(category).trim().toUpperCase(), areaCode: ac, criticality });
+        updated++;
+      } else {
+        byId.set(id, { id, name: String(name).trim(), category: String(category).trim().toUpperCase(), areaCode: ac, criticality, status: "READY", remark: "-", lastUpdate: new Date().toISOString(), updatedBy: ROLES[role].label, active: true });
+        created++;
+      }
+    });
+    const next = Array.from(byId.values());
+    persistEquipment(next);
+    addAudit("Equipment master imported", "bulk import", `${created} created, ${updated} updated, ${skipped} skipped`);
+    return { created, updated, skipped };
+  }
+
   const selectedEq = equipment.find((e) => e.id === selectedId) || null;
 
+  function switchRole(newRole) {
+    setRole(newRole);
+    if (ROLES[newRole].scoped && assignedAreas.length === 0) setAssignedAreas([AREAS[0].code]);
+    setTab(ROLES[newRole].home);
+    setMobileNavOpen(false);
+  }
+
   if (loading) {
-    return (
-      <div className="h-screen w-full flex items-center justify-center bg-slate-950 text-slate-400 font-mono text-sm">
-        <RefreshCw className="animate-spin mr-2" size={16} /> Loading Control Tower…
-      </div>
-    );
+    return <div className="h-screen w-full flex items-center justify-center bg-slate-950 text-slate-400 font-mono text-sm">
+      <RefreshCw className="animate-spin mr-2" size={16} /> Loading ERCT — generating 384-equipment baseline…
+    </div>;
   }
 
   return (
     <div className="h-screen w-full bg-slate-950 text-slate-200 flex flex-col overflow-hidden" style={{ fontFamily: "Inter, ui-sans-serif, system-ui" }}>
-      <TopBar role={role} setRole={setRole} now={now} readiness={readiness} needCount={needAttention.length} />
-
+      <ProtoBanner />
+      <TopBar
+        role={role} switchRole={switchRole} now={now} readiness={readiness} needCount={needAttention.length}
+        assignedAreas={assignedAreas} setAssignedAreas={setAssignedAreas} sessionOpen={sessionOpen} setSessionOpen={setSessionOpen}
+        mobileNavOpen={mobileNavOpen} setMobileNavOpen={setMobileNavOpen}
+      />
       <div className="flex-1 flex overflow-hidden">
-        <SideNav tab={tab} setTab={setTab} needCount={needAttention.length} role={role} onHandover={() => setHandoverOpen(true)} />
-
-        <main className="flex-1 overflow-y-auto">
+        <SideNav tab={tab} setTab={setTab} needCount={needAttention.length} role={role} onHandover={() => setHandoverOpen(true)}
+          mobileNavOpen={mobileNavOpen} setMobileNavOpen={setMobileNavOpen} />
+        <main className="print:hidden flex-1 overflow-y-auto">
+          {tab === "home" && ROLES[role].scoped && (
+            <MyAreaHome counts={counts} readiness={readiness} needAttention={needAttention} assignedAreas={assignedAreas}
+              onOpenEq={(id) => setSelectedId(id)} equipment={scopedEquipment} onUpdate={(eq) => setUpdateModalEq(eq)} canEdit={ROLES[role].canEdit} />
+          )}
           {tab === "tower" && (
-            <ControlTower
-              counts={counts} readiness={readiness} needAttention={needAttention}
-              onOpenEq={(id) => setSelectedId(id)} now={now}
-            />
+            <ControlTower counts={counts} readiness={readiness} needAttention={needAttention} onOpenEq={(id) => setSelectedId(id)}
+              now={now} areaMatrix={areaMatrix} showAreaMatrix={!ROLES[role].scoped || assignedAreas.length > 1} />
           )}
           {tab === "equipment" && (
-            <EquipmentTab
-              equipment={activeEq} openIncidentByEq={openIncidentByEq}
-              onOpenEq={(id) => setSelectedId(id)}
-              onUpdate={(eq) => setUpdateModalEq(eq)}
-              canEdit={ROLES[role].canEdit}
-              canMaster={ROLES[role].canMaster}
-              onAddEquipment={() => setAddEqOpen(true)}
-            />
+            <EquipmentTab equipment={scopedEquipment} scopedAreaCodes={scopedAreaCodes} openIncidentByEq={openIncidentByEq} subAreas={subAreas}
+              onOpenEq={(id) => setSelectedId(id)} onUpdate={(eq) => setUpdateModalEq(eq)} canEdit={ROLES[role].canEdit}
+              canMaster={ROLES[role].canMaster} onAddEquipment={() => setAddEqOpen(true)} triggerPrint={triggerPrint} />
           )}
-          {tab === "handover" && (
-            <HandoverTab handovers={handovers} onNew={() => setHandoverOpen(true)} canHandover={ROLES[role].canHandover} />
+          {tab === "history" && <HistoryTab history={history.filter((h) => scopedAreaCodes.includes(h.areaCode))} triggerPrint={triggerPrint} />}
+          {tab === "handover" && <HandoverTab handovers={handovers} onNew={() => setHandoverOpen(true)} canHandover={ROLES[role].canHandover} />}
+          {tab === "admin" && ROLES[role].canMaster && (
+            <AdminTab categories={categories} users={users} shifts={shifts} subAreas={subAreas}
+              onAddCategory={addCategory} onAddUser={addUser} onAddSubArea={addSubArea} onImportEquipment={importEquipmentFromRows} areaMatrix={AREAS} />
           )}
-          {tab === "audit" && <AuditTab audit={audit} />}
+          {tab === "audit" && ROLES[role].canAudit && <AuditTab audit={audit} />}
         </main>
       </div>
 
       {selectedEq && (
-        <DetailDrawer
-          eq={selectedEq}
-          incident={openIncidentByEq[selectedEq.id]}
-          history={history.filter((h) => h.equipmentId === selectedEq.id)}
-          onClose={() => setSelectedId(null)}
-          onUpdate={() => setUpdateModalEq(selectedEq)}
-          onAddProgress={(note) => addProgress(selectedEq, note)}
-          canEdit={ROLES[role].canEdit}
-          now={now}
-        />
+        <DetailDrawer eq={selectedEq} incident={openIncidentByEq[selectedEq.id]} history={history.filter((h) => h.equipmentId === selectedEq.id)}
+          onClose={() => setSelectedId(null)} onUpdate={() => setUpdateModalEq(selectedEq)} onAddProgress={(note) => addProgress(selectedEq, note)}
+          canEdit={ROLES[role].canEdit && scopedAreaCodes.includes(selectedEq.areaCode)} now={now} subAreas={subAreas} />
       )}
+      {updateModalEq && <UpdateStatusModal eq={updateModalEq} incident={openIncidentByEq[updateModalEq.id]} onClose={() => setUpdateModalEq(null)} onSubmit={applyStatusChange} />}
+      {addEqOpen && <AddEquipmentModal onClose={() => setAddEqOpen(false)} onSubmit={addEquipment} scopedAreaCodes={scopedAreaCodes} categories={categories} subAreas={subAreas} />}
+      {handoverOpen && <HandoverModal onClose={() => setHandoverOpen(false)} onSubmit={submitHandover} equipment={scopedEquipment} needAttention={needAttention} />}
+      <PrintArea data={printData} />
+    </div>
+  );
+}
 
-      {updateModalEq && (
-        <UpdateStatusModal
-          eq={updateModalEq}
-          incident={openIncidentByEq[updateModalEq.id]}
-          onClose={() => setUpdateModalEq(null)}
-          onSubmit={applyStatusChange}
-        />
-      )}
-
-      {addEqOpen && (
-        <AddEquipmentModal onClose={() => setAddEqOpen(false)} onSubmit={addEquipment} />
-      )}
-
-      {handoverOpen && (
-        <HandoverModal onClose={() => setHandoverOpen(false)} onSubmit={submitHandover} equipment={activeEq} needAttention={needAttention} />
+function PrintArea({ data }) {
+  return (
+    <div id="print-area" className="hidden print:block bg-white text-slate-900 p-6">
+      {data && (
+        <>
+          <div className="flex items-center justify-between mb-1">
+            <h1 className="text-lg font-semibold">{data.title}</h1>
+            <span className="text-xs text-slate-500">Generated {fmtDateTime(new Date().toISOString())}</span>
+          </div>
+          <div className="text-[10px] text-slate-500 mb-4">IPC TPK · Equipment Readiness Control Tower · {data.rows.length} records</div>
+          <table className="w-full text-xs border-collapse">
+            <thead><tr>{data.columns.map((c) => <th key={c.key} className="text-left border border-slate-300 px-2 py-1 bg-slate-100">{c.label}</th>)}</tr></thead>
+            <tbody>
+              {data.rows.map((r, i) => (
+                <tr key={i}>{data.columns.map((c) => <td key={c.key} className="border border-slate-300 px-2 py-1">{String(r[c.key] ?? "-")}</td>)}</tr>
+              ))}
+            </tbody>
+          </table>
+        </>
       )}
     </div>
   );
 }
 
 /* ---------------------------------------------------------------------- */
-/* Top bar                                                                  */
+/* Prototype banner                                                        */
 /* ---------------------------------------------------------------------- */
 
-function TopBar({ role, setRole, now, readiness, needCount }) {
+function ProtoBanner() {
+  const [open, setOpen] = useState(false);
+  return (
+    <div className="print:hidden shrink-0 bg-amber-400/10 border-b border-amber-400/20 text-amber-300 text-[11px] px-3 py-1.5 flex items-center gap-2">
+      <InfoIcon size={12} className="shrink-0" />
+      <span className="flex-1">
+        Frontend prototype — role/area access is <strong>simulated in the browser</strong>, not enforced by a real backend.
+        {" "}<button onClick={() => setOpen((o) => !o)} className="underline hover:text-amber-200">{open ? "hide details" : "why this matters"}</button>
+      </span>
+      {open && (
+        <span className="hidden md:inline text-amber-300/80">
+          PRD Section 5 requires server-side authorization per user-area mapping — that needs a real backend/database (e.g. Supabase) before production rollout.
+        </span>
+      )}
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------------- */
+/* Top bar + session simulator                                             */
+/* ---------------------------------------------------------------------- */
+
+function TopBar({ role, switchRole, now, readiness, needCount, assignedAreas, setAssignedAreas, sessionOpen, setSessionOpen, mobileNavOpen, setMobileNavOpen }) {
   const d = new Date(now);
   const time = `${String(d.getHours()).padStart(2,"0")}:${String(d.getMinutes()).padStart(2,"0")}`;
+  const toggleArea = (code) => {
+    setAssignedAreas((prev) => prev.includes(code) ? (prev.length > 1 ? prev.filter((c) => c !== code) : prev) : [...prev, code]);
+  };
   return (
-    <header className="h-14 shrink-0 border-b border-slate-800 bg-slate-950/95 backdrop-blur flex items-center px-4 gap-4">
-      <div className="flex items-center gap-2">
-        <div className="h-7 w-7 rounded bg-cyan-500/10 ring-1 ring-cyan-500/30 flex items-center justify-center">
-          <Radio size={15} className="text-cyan-400" />
-        </div>
-        <div className="leading-tight">
-          <div className="text-[13px] font-semibold text-slate-100 tracking-tight">Equipment Readiness Control Tower</div>
-          <div className="text-[10.5px] text-slate-500 font-mono">{ORG} · {AREA} · MVP PILOT v1.0</div>
+    <header className="print:hidden h-14 shrink-0 border-b border-slate-800 bg-slate-950/95 backdrop-blur flex items-center px-3 sm:px-4 gap-3 relative">
+      <button className="lg:hidden text-slate-400" onClick={() => setMobileNavOpen((o) => !o)}><Menu size={20} /></button>
+      <div className="flex items-center gap-2 min-w-0">
+        <div className="h-7 w-7 rounded bg-cyan-500/10 ring-1 ring-cyan-500/30 flex items-center justify-center shrink-0"><Radio size={15} className="text-cyan-400" /></div>
+        <div className="leading-tight min-w-0">
+          <div className="text-[13px] font-semibold text-slate-100 tracking-tight truncate">Equipment Readiness Control Tower</div>
+          <div className="text-[10.5px] text-slate-500 font-mono truncate">IPC TPK · Multi-Area · PRD v2.1</div>
         </div>
       </div>
 
-      <div className="ml-auto flex items-center gap-3">
+      <div className="ml-auto flex items-center gap-2 sm:gap-3">
         {needCount > 0 && (
           <div className="hidden sm:flex items-center gap-1.5 text-red-400 text-xs font-mono bg-red-500/10 ring-1 ring-red-500/30 rounded-md px-2 py-1">
-            <AlertTriangle size={13} className="animate-pulse" /> {needCount} need attention
+            <AlertTriangle size={13} className="animate-pulse" /> {needCount}
           </div>
         )}
         <div className="hidden md:flex items-center gap-1.5 text-emerald-400 text-xs font-mono bg-emerald-500/10 ring-1 ring-emerald-500/30 rounded-md px-2 py-1">
-          <CheckCircle2 size={13} /> {readiness}% readiness
+          <CheckCircle2 size={13} /> {readiness}%
         </div>
         <div className="text-slate-400 text-xs font-mono hidden sm:block">{time}</div>
-        <select
-          value={role}
-          onChange={(e) => setRole(e.target.value)}
-          className="bg-slate-900 border border-slate-700 text-slate-200 text-xs rounded-md px-2 py-1.5 focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
-        >
-          {Object.entries(ROLES).map(([key, r]) => (
-            <option key={key} value={key}>{r.label}</option>
-          ))}
-        </select>
+        <button onClick={() => setSessionOpen((o) => !o)} className="flex items-center gap-1.5 bg-slate-900 border border-slate-700 text-slate-200 text-xs rounded-md px-2 py-1.5">
+          <UserCircle2 size={14} className="text-cyan-400" /> {ROLES[role].label}
+        </button>
       </div>
+
+      {sessionOpen && (
+        <div className="absolute top-14 right-3 sm:right-4 z-30 w-72 bg-slate-900 border border-slate-700 rounded-lg shadow-xl p-3 space-y-3">
+          <div>
+            <div className="text-[10px] text-slate-500 uppercase tracking-wide mb-1">Simulated Role</div>
+            <select value={role} onChange={(e) => switchRole(e.target.value)} className="w-full bg-slate-950 border border-slate-700 rounded-md px-2 py-1.5 text-xs text-slate-200">
+              {Object.entries(ROLES).map(([k, r]) => <option key={k} value={k}>{r.label}</option>)}
+            </select>
+          </div>
+          {ROLES[role].scoped && (
+            <div>
+              <div className="text-[10px] text-slate-500 uppercase tracking-wide mb-1">Assigned Area(s)</div>
+              <div className="max-h-40 overflow-y-auto space-y-1 pr-1">
+                {AREAS.map((a) => (
+                  <label key={a.code} className="flex items-center gap-2 text-xs text-slate-300">
+                    <input type="checkbox" checked={assignedAreas.includes(a.code)} onChange={() => toggleArea(a.code)} className="accent-cyan-500" />
+                    {a.name} <span className="text-slate-600 font-mono">({a.code})</span>
+                  </label>
+                ))}
+              </div>
+            </div>
+          )}
+          <div className="text-[10.5px] text-slate-500 leading-snug border-t border-slate-800 pt-2">Simulates PRD §5 User-Area Assignment. Real deployment: enforced server-side, not switchable by the user.</div>
+        </div>
+      )}
     </header>
   );
 }
 
 /* ---------------------------------------------------------------------- */
-/* Side nav                                                                 */
+/* Side / mobile nav                                                       */
 /* ---------------------------------------------------------------------- */
 
-function SideNav({ tab, setTab, needCount, role, onHandover }) {
-  const items = [
-    { key: "tower", label: "Control Tower", icon: LayoutGrid },
-    { key: "equipment", label: "Equipment", icon: Wrench },
-    { key: "handover", label: "Shift Handover", icon: ArrowLeftRight },
-    { key: "audit", label: "Audit Log", icon: ClipboardList },
-  ];
-  return (
-    <nav className="w-14 sm:w-48 shrink-0 border-r border-slate-800 bg-slate-950 flex flex-col py-3 gap-1">
+function navItemsForRole(role) {
+  const scoped = ROLES[role].scoped;
+  const items = [];
+  if (scoped) items.push({ key: "home", label: "My Area", icon: MapPin });
+  items.push({ key: "tower", label: "Control Tower", icon: LayoutGrid });
+  items.push({ key: "equipment", label: "Equipment", icon: Wrench });
+  items.push({ key: "history", label: "History", icon: HistoryIcon });
+  items.push({ key: "handover", label: "Handover", icon: ArrowLeftRight });
+  if (ROLES[role].canMaster) items.push({ key: "admin", label: "Administration", icon: Settings });
+  if (ROLES[role].canAudit) items.push({ key: "audit", label: "Audit Log", icon: ClipboardList });
+  return items;
+}
+
+function SideNav({ tab, setTab, needCount, role, onHandover, mobileNavOpen, setMobileNavOpen }) {
+  const items = navItemsForRole(role);
+  const content = (
+    <>
       {items.map((it) => {
         const Icon = it.icon;
         const active = tab === it.key;
         return (
-          <button
-            key={it.key}
-            onClick={() => setTab(it.key)}
-            className={`flex items-center gap-2.5 mx-2 px-2.5 py-2 rounded-lg text-sm transition-colors ${
-              active ? "bg-cyan-500/10 text-cyan-300 ring-1 ring-cyan-500/30" : "text-slate-400 hover:bg-slate-900 hover:text-slate-200"
-            }`}
-          >
-            <Icon size={16} />
-            <span className="hidden sm:inline">{it.label}</span>
-            {it.key === "tower" && needCount > 0 && (
-              <span className="hidden sm:inline ml-auto text-[10px] font-mono bg-red-500 text-white rounded-full px-1.5">{needCount}</span>
-            )}
+          <button key={it.key} onClick={() => { setTab(it.key); setMobileNavOpen(false); }}
+            className={`flex items-center gap-2.5 mx-2 px-2.5 py-2 rounded-lg text-sm transition-colors ${active ? "bg-cyan-500/10 text-cyan-300 ring-1 ring-cyan-500/30" : "text-slate-400 hover:bg-slate-900 hover:text-slate-200"}`}>
+            <Icon size={16} /><span>{it.label}</span>
+            {it.key === "tower" && needCount > 0 && <span className="ml-auto text-[10px] font-mono bg-red-500 text-white rounded-full px-1.5">{needCount}</span>}
           </button>
         );
       })}
       {ROLES[role].canHandover && (
         <button onClick={onHandover} className="mx-2 mt-2 px-2.5 py-2 rounded-lg text-sm border border-dashed border-slate-700 text-slate-400 hover:text-slate-200 hover:border-slate-500 flex items-center gap-2.5">
-          <Plus size={15} />
-          <span className="hidden sm:inline">New Handover</span>
+          <Plus size={15} /><span>New Handover</span>
         </button>
       )}
-    </nav>
+    </>
+  );
+  return (
+    <>
+      <nav className="print:hidden hidden lg:flex w-52 shrink-0 border-r border-slate-800 bg-slate-950 flex-col py-3 gap-1">{content}</nav>
+      {mobileNavOpen && (
+        <div className="print:hidden fixed inset-0 z-40 lg:hidden flex">
+          <div className="absolute inset-0 bg-black/60" onClick={() => setMobileNavOpen(false)} />
+          <nav className="relative w-64 bg-slate-950 border-r border-slate-800 h-full flex flex-col py-3 gap-1">
+            <div className="px-4 pb-2 flex items-center justify-between">
+              <span className="text-xs text-slate-500 uppercase tracking-wide">Menu</span>
+              <button onClick={() => setMobileNavOpen(false)} className="text-slate-500"><X size={16} /></button>
+            </div>
+            {content}
+          </nav>
+        </div>
+      )}
+    </>
   );
 }
 
 /* ---------------------------------------------------------------------- */
-/* Control Tower tab                                                       */
+/* My Area Home (Admin / Supervisor default landing)                       */
 /* ---------------------------------------------------------------------- */
 
-function ControlTower({ counts, readiness, needAttention, onOpenEq, now }) {
-  const cards = [
-    { key: "READY", label: "Ready" },
-    { key: "READY_NOTE", label: "Ready w/ Note" },
-    { key: "MAINTENANCE", label: "Maintenance" },
-    { key: "BREAKDOWN", label: "Breakdown" },
-    { key: "OUT_OF_SERVICE", label: "Out of Service" },
-  ];
-
+function MyAreaHome({ counts, readiness, needAttention, assignedAreas, onOpenEq, equipment, onUpdate, canEdit }) {
   return (
-    <div className="p-5 space-y-6">
-      {/* readiness hero */}
-      <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-5 flex flex-col sm:flex-row sm:items-center gap-5">
+    <div className="p-4 sm:p-5 space-y-5">
+      <div>
+        <h1 className="text-base font-semibold text-slate-100">My Area Overview</h1>
+        <p className="text-xs text-slate-500 font-mono">{assignedAreas.map(areaName).join(" · ")}</p>
+      </div>
+
+      <div className="grid grid-cols-2 sm:grid-cols-3 md:grid-cols-6 gap-2">
+        {[["READY","Ready"],["READY_NOTE","Note"],["MAINTENANCE","Maint."],["BREAKDOWN","Breakdown"],["OUT_OF_SERVICE","OOS"]].map(([k,l]) => (
+          <div key={k} className="rounded-lg bg-slate-900/60 border border-slate-800 p-3">
+            <div className="flex items-center gap-1.5 mb-1"><StatusDot status={k} pulse={k==="BREAKDOWN" && counts[k]>0} /><span className="text-[10.5px] text-slate-400 uppercase">{l}</span></div>
+            <div className="text-lg font-mono font-semibold text-slate-100">{counts[k]}</div>
+          </div>
+        ))}
+        <div className="rounded-lg bg-emerald-500/10 border border-emerald-500/20 p-3">
+          <div className="text-[10.5px] text-emerald-400 uppercase mb-1">Readiness</div>
+          <div className="text-lg font-mono font-semibold text-emerald-300">{readiness}%</div>
+        </div>
+      </div>
+
+      <div>
+        <div className="text-xs font-semibold text-slate-300 mb-2 flex items-center gap-1.5"><ShieldAlert size={14} className="text-red-400" /> Need Attention in your area</div>
+        {needAttention.length === 0 ? (
+          <div className="text-xs text-slate-500 border border-dashed border-slate-800 rounded-lg p-4 text-center">No open exceptions in your assigned area(s).</div>
+        ) : (
+          <div className="space-y-1.5">
+            {needAttention.slice(0, 6).map(({ eq, level }) => (
+              <button key={eq.id} onClick={() => onOpenEq(eq.id)} className="w-full flex items-center gap-2 text-left bg-slate-900/60 border border-slate-800 rounded-lg px-3 py-2 hover:bg-slate-900">
+                <span className={`text-[9px] font-mono font-bold rounded px-1.5 py-0.5 ${level==="CRITICAL"?"bg-red-500 text-white":"bg-amber-400 text-slate-900"}`}>{level}</span>
+                <span className="font-mono text-xs text-slate-100">{eq.id}</span>
+                <span className="text-[11px] text-slate-500 truncate flex-1">{eq.remark}</span>
+                <ChevronRight size={13} className="text-slate-600" />
+              </button>
+            ))}
+          </div>
+        )}
+      </div>
+
+      {canEdit && (
+        <div>
+          <div className="text-xs font-semibold text-slate-300 mb-2">Quick Update</div>
+          <div className="grid grid-cols-2 sm:grid-cols-3 gap-2">
+            {equipment.slice(0, 6).map((eq) => (
+              <button key={eq.id} onClick={() => onUpdate(eq)} className="text-left bg-slate-900/60 border border-slate-800 rounded-lg p-2.5 hover:border-cyan-500/40">
+                <div className="font-mono text-xs text-slate-100">{eq.id}</div>
+                <div className="mt-1"><StatusBadge status={eq.status} /></div>
+              </button>
+            ))}
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------------- */
+/* Control Tower                                                           */
+/* ---------------------------------------------------------------------- */
+
+function ControlTower({ counts, readiness, needAttention, onOpenEq, now, areaMatrix, showAreaMatrix }) {
+  const cards = [["READY","Ready"],["READY_NOTE","Ready w/ Note"],["MAINTENANCE","Maintenance"],["BREAKDOWN","Breakdown"],["OUT_OF_SERVICE","Out of Service"]];
+  return (
+    <div className="p-4 sm:p-5 space-y-5">
+      <div className="rounded-xl border border-slate-800 bg-slate-900/60 p-4 sm:p-5 flex flex-col sm:flex-row sm:items-center gap-4">
         <div className="flex items-center gap-4">
           <ReadinessRing pct={readiness} />
           <div>
             <div className="text-3xl font-mono font-semibold text-slate-50">{readiness}%</div>
-            <div className="text-xs text-slate-400">Readiness — Ready / Active Equipment</div>
-            <div className="text-[10.5px] text-slate-600 mt-0.5">Ready With Note treatment pending validation (see Open Decisions)</div>
+            <div className="text-xs text-slate-400">National / Scoped Readiness</div>
           </div>
         </div>
-        <div className="flex-1 grid grid-cols-2 sm:grid-cols-5 gap-2 sm:gap-3">
-          {cards.map((c) => (
-            <div key={c.key} className="rounded-lg bg-slate-950/60 border border-slate-800 p-3">
-              <div className="flex items-center gap-1.5 mb-1">
-                <StatusDot status={c.key} pulse={c.key === "BREAKDOWN" && counts[c.key] > 0} />
-                <span className="text-[10.5px] text-slate-400 uppercase tracking-wide">{c.label}</span>
-              </div>
-              <div className="text-xl font-mono font-semibold text-slate-100">{counts[c.key]}</div>
+        <div className="flex-1 grid grid-cols-2 sm:grid-cols-5 gap-2">
+          {cards.map(([k,l]) => (
+            <div key={k} className="rounded-lg bg-slate-950/60 border border-slate-800 p-2.5">
+              <div className="flex items-center gap-1.5 mb-1"><StatusDot status={k} pulse={k==="BREAKDOWN" && counts[k]>0} /><span className="text-[10px] text-slate-400 uppercase">{l}</span></div>
+              <div className="text-lg font-mono font-semibold text-slate-100">{counts[k]}</div>
             </div>
           ))}
         </div>
       </div>
 
-      {/* need attention */}
-      <div className="rounded-xl border border-slate-800 bg-slate-900/60">
-        <div className="flex items-center gap-2 px-4 py-3 border-b border-slate-800">
-          <ShieldAlert size={16} className="text-red-400" />
-          <h2 className="text-sm font-semibold text-slate-100">Need Attention</h2>
-          <span className="text-[10.5px] font-mono text-slate-500">breakdown severity · aging · ETA · stale update</span>
-        </div>
-        {needAttention.length === 0 ? (
-          <div className="p-8 text-center text-slate-500 text-sm">
-            <CheckCircle2 className="mx-auto mb-2 text-emerald-500" size={22} />
-            No open exceptions. All equipment nominal.
+      {showAreaMatrix && (
+        <div className="rounded-xl border border-slate-800 bg-slate-900/60">
+          <div className="flex items-center gap-2 px-4 py-3 border-b border-slate-800"><Building2 size={15} className="text-cyan-400" /><h2 className="text-sm font-semibold text-slate-100">Area Matrix</h2></div>
+          <div className="overflow-x-auto">
+            <table className="w-full text-xs">
+              <thead><tr className="bg-slate-950/50 text-slate-500 uppercase text-[10px]"><th className="text-left px-3 py-2">Area</th><th className="text-left px-3 py-2">Code</th><th className="text-right px-3 py-2">Total</th><th className="text-right px-3 py-2">Ready</th><th className="text-right px-3 py-2">Breakdown</th><th className="text-right px-3 py-2">Readiness</th></tr></thead>
+              <tbody className="divide-y divide-slate-800">
+                {areaMatrix.map((a) => (
+                  <tr key={a.code} className="hover:bg-slate-800/30">
+                    <td className="px-3 py-2 text-slate-200">{a.name}</td>
+                    <td className="px-3 py-2 font-mono text-slate-500">{a.code}</td>
+                    <td className="px-3 py-2 text-right font-mono text-slate-300">{a.total}</td>
+                    <td className="px-3 py-2 text-right font-mono text-emerald-400">{a.ready}</td>
+                    <td className="px-3 py-2 text-right font-mono text-red-400">{a.breakdown || "-"}</td>
+                    <td className="px-3 py-2 text-right font-mono text-slate-200">{a.readiness}%</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
           </div>
+        </div>
+      )}
+
+      <div className="rounded-xl border border-slate-800 bg-slate-900/60">
+        <div className="flex items-center gap-2 px-4 py-3 border-b border-slate-800"><ShieldAlert size={16} className="text-red-400" /><h2 className="text-sm font-semibold text-slate-100">Need Attention</h2></div>
+        {needAttention.length === 0 ? (
+          <div className="p-8 text-center text-slate-500 text-sm"><CheckCircle2 className="mx-auto mb-2 text-emerald-500" size={22} />No open exceptions.</div>
         ) : (
           <div className="divide-y divide-slate-800">
-            {needAttention.map(({ eq, inc, level, flags, downtimeMs }) => (
-              <button
-                key={eq.id}
-                onClick={() => onOpenEq(eq.id)}
-                className="w-full flex items-center gap-3 px-4 py-3 hover:bg-slate-800/40 text-left transition-colors"
-              >
-                <span className={`text-[10px] font-mono font-bold rounded px-1.5 py-0.5 ${level === "CRITICAL" ? "bg-red-500 text-white" : "bg-amber-400 text-slate-900"}`}>
-                  {level}
-                </span>
+            {needAttention.slice(0, 40).map(({ eq, inc, level, flags, downtimeMs }) => (
+              <button key={eq.id} onClick={() => onOpenEq(eq.id)} className="w-full flex items-center gap-3 px-4 py-3 hover:bg-slate-800/40 text-left">
+                <span className={`text-[10px] font-mono font-bold rounded px-1.5 py-0.5 ${level==="CRITICAL"?"bg-red-500 text-white":"bg-amber-400 text-slate-900"}`}>{level}</span>
                 <div className="min-w-0 flex-1">
-                  <div className="flex items-center gap-2">
-                    <span className="font-mono text-sm text-slate-100">{eq.id}</span>
-                    <span className="text-xs text-slate-500 truncate">{eq.name}</span>
-                    <span className="text-[10px] text-slate-600 font-mono">{eq.subArea}</span>
-                  </div>
+                  <div className="flex items-center gap-2"><span className="font-mono text-sm text-slate-100">{eq.id}</span><span className="text-[10px] text-slate-600 font-mono">{areaName(eq.areaCode)}</span></div>
                   <div className="text-xs text-slate-400 truncate">{inc?.problem} · PIC: {inc?.pic}</div>
                 </div>
                 <div className="text-right shrink-0">
                   <div className="text-xs font-mono text-slate-300">{fmtDuration(downtimeMs)}</div>
-                  <div className="flex gap-1 justify-end mt-0.5">
-                    {flags.map((f) => (
-                      <span key={f} className="text-[9px] font-mono text-slate-500 bg-slate-800 rounded px-1">{f}</span>
-                    ))}
-                  </div>
+                  <div className="flex gap-1 justify-end mt-0.5">{flags.map((f) => <span key={f} className="text-[9px] font-mono text-slate-500 bg-slate-800 rounded px-1">{f}</span>)}</div>
                 </div>
                 <ChevronRight size={15} className="text-slate-600 shrink-0" />
               </button>
@@ -692,83 +1360,89 @@ function ControlTower({ counts, readiness, needAttention, onOpenEq, now }) {
           </div>
         )}
       </div>
-
-      <div className="text-[10.5px] text-slate-600 font-mono">Last sync: {fmtAgo(new Date(now).toISOString(), now)} · data stored locally to this pilot workspace</div>
     </div>
   );
 }
 
 function ReadinessRing({ pct }) {
-  const r = 26, c = 2 * Math.PI * r;
-  const offset = c - (pct / 100) * c;
+  const r = 26, c = 2 * Math.PI * r, offset = c - (pct / 100) * c;
   const color = pct >= 90 ? "#34d399" : pct >= 70 ? "#fbbf24" : "#f87171";
   return (
-    <svg width="64" height="64" viewBox="0 0 64 64" className="shrink-0">
+    <svg width="60" height="60" viewBox="0 0 64 64" className="shrink-0">
       <circle cx="32" cy="32" r={r} fill="none" stroke="#1e293b" strokeWidth="6" />
-      <circle
-        cx="32" cy="32" r={r} fill="none" stroke={color} strokeWidth="6" strokeLinecap="round"
-        strokeDasharray={c} strokeDashoffset={offset} transform="rotate(-90 32 32)"
-        style={{ transition: "stroke-dashoffset 0.6s ease" }}
-      />
+      <circle cx="32" cy="32" r={r} fill="none" stroke={color} strokeWidth="6" strokeLinecap="round" strokeDasharray={c} strokeDashoffset={offset} transform="rotate(-90 32 32)" style={{ transition: "stroke-dashoffset 0.6s ease" }} />
     </svg>
   );
 }
 
 /* ---------------------------------------------------------------------- */
-/* Equipment tab                                                           */
+/* Equipment tab (with pagination — up to 384 rows in scope)               */
 /* ---------------------------------------------------------------------- */
 
-function EquipmentTab({ equipment, openIncidentByEq, onOpenEq, onUpdate, canEdit, canMaster, onAddEquipment }) {
+function EquipmentTab({ equipment, scopedAreaCodes, openIncidentByEq, onOpenEq, onUpdate, canEdit, canMaster, onAddEquipment, subAreas, triggerPrint }) {
   const [filter, setFilter] = useState("ALL");
-  const [subArea, setSubArea] = useState("ALL");
+  const [areaFilter, setAreaFilter] = useState("ALL");
   const [q, setQ] = useState("");
+  const [page, setPage] = useState(1);
+  const pageSize = 20;
 
   const filtered = equipment.filter((e) => {
     if (filter !== "ALL" && e.status !== filter) return false;
-    if (subArea !== "ALL" && e.subArea !== subArea) return false;
+    if (areaFilter !== "ALL" && e.areaCode !== areaFilter) return false;
     if (q && !(`${e.id} ${e.name} ${e.category}`.toLowerCase().includes(q.toLowerCase()))) return false;
     return true;
   });
+  const totalPages = Math.max(1, Math.ceil(filtered.length / pageSize));
+  const pageItems = filtered.slice((page - 1) * pageSize, page * pageSize);
+  useEffect(() => { setPage(1); }, [filter, areaFilter, q]);
 
-  const filterChips = [
-    { key: "ALL", label: "All" },
-    { key: "READY", label: "Ready" },
-    { key: "READY_NOTE", label: "Note" },
-    { key: "MAINTENANCE", label: "Maint." },
-    { key: "BREAKDOWN", label: "Breakdown" },
-    { key: "OUT_OF_SERVICE", label: "OOS" },
-  ];
+  const filterChips = [["ALL","All"],["READY","Ready"],["READY_NOTE","Note"],["MAINTENANCE","Maint."],["BREAKDOWN","Breakdown"],["OUT_OF_SERVICE","OOS"]];
+
+  function exportExcel() {
+    const rows = filtered.map((e) => ({
+      "Equipment Code": e.id, "Name": e.name, "Category": e.category, "Area": areaName(e.areaCode),
+      "Sub Area": subAreaName(subAreas, e.subAreaId) || "-", "Criticality": e.criticality, "Status": STATUS[e.status].label,
+      "Remark": e.remark, "Last Update": fmtDateTime(e.lastUpdate),
+    }));
+    exportRowsToExcel(`ERCT_Equipment_${Date.now()}.xlsx`, "Equipment", rows);
+  }
+  function exportPdf() {
+    triggerPrint("Equipment List", [
+      { key: "id", label: "Code" }, { key: "name", label: "Name" }, { key: "area", label: "Area" },
+      { key: "status", label: "Status" }, { key: "remark", label: "Remark" }, { key: "lastUpdate", label: "Last Update" },
+    ], filtered.map((e) => ({ id: e.id, name: e.name, area: areaName(e.areaCode), status: STATUS[e.status].label, remark: e.remark, lastUpdate: fmtDateTime(e.lastUpdate) })));
+  }
 
   return (
-    <div className="p-5 space-y-4">
-      <div className="flex flex-col sm:flex-row sm:items-center gap-3">
+    <div className="p-4 sm:p-5 space-y-4">
+      <div className="flex flex-col sm:flex-row sm:items-center gap-2">
         <div className="relative flex-1 max-w-sm">
           <Search size={14} className="absolute left-2.5 top-2.5 text-slate-500" />
-          <input
-            value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search equipment ID or name…"
-            className="w-full bg-slate-900 border border-slate-700 rounded-md pl-8 pr-3 py-2 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
-          />
+          <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search equipment ID or name…"
+            className="w-full bg-slate-900 border border-slate-700 rounded-md pl-8 pr-3 py-2 text-sm text-slate-200 placeholder-slate-500 focus:outline-none focus:ring-2 focus:ring-cyan-500/50" />
         </div>
-        <select value={subArea} onChange={(e) => setSubArea(e.target.value)} className="bg-slate-900 border border-slate-700 rounded-md px-2 py-2 text-sm text-slate-200">
-          <option value="ALL">All Sub-Areas</option>
-          {SUB_AREAS.map((s) => <option key={s} value={s}>{s}</option>)}
-        </select>
-        {canMaster && (
-          <button onClick={onAddEquipment} className="flex items-center gap-1.5 bg-cyan-500/10 text-cyan-300 ring-1 ring-cyan-500/30 rounded-md px-3 py-2 text-sm hover:bg-cyan-500/20">
-            <Plus size={14} /> Add Equipment
-          </button>
+        {scopedAreaCodes.length > 1 && (
+          <select value={areaFilter} onChange={(e) => setAreaFilter(e.target.value)} className="bg-slate-900 border border-slate-700 rounded-md px-2 py-2 text-sm text-slate-200">
+            <option value="ALL">All Areas ({scopedAreaCodes.length})</option>
+            {AREAS.filter((a) => scopedAreaCodes.includes(a.code)).map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}
+          </select>
         )}
+        <div className="flex gap-1.5 shrink-0">
+          <button onClick={exportExcel} title="Export Excel" className="flex items-center gap-1.5 bg-slate-900 border border-slate-700 text-slate-300 rounded-md px-2.5 py-2 text-xs hover:border-slate-500"><FileSpreadsheet size={14} /> Excel</button>
+          <button onClick={exportPdf} title="Export / Print PDF" className="flex items-center gap-1.5 bg-slate-900 border border-slate-700 text-slate-300 rounded-md px-2.5 py-2 text-xs hover:border-slate-500"><Printer size={14} /> PDF</button>
+          {canMaster && (
+            <button onClick={onAddEquipment} className="flex items-center gap-1.5 bg-cyan-500/10 text-cyan-300 ring-1 ring-cyan-500/30 rounded-md px-3 py-2 text-sm hover:bg-cyan-500/20">
+              <Plus size={14} /> Add
+            </button>
+          )}
+        </div>
       </div>
 
       <div className="flex gap-1.5 flex-wrap">
-        {filterChips.map((c) => (
-          <button
-            key={c.key} onClick={() => setFilter(c.key)}
-            className={`text-xs font-mono px-2.5 py-1 rounded-full border transition-colors ${
-              filter === c.key ? "bg-slate-100 text-slate-900 border-slate-100" : "border-slate-700 text-slate-400 hover:border-slate-500"
-            }`}
-          >{c.label}</button>
+        {filterChips.map(([k,l]) => (
+          <button key={k} onClick={() => setFilter(k)} className={`text-xs font-mono px-2.5 py-1 rounded-full border transition-colors ${filter===k?"bg-slate-100 text-slate-900 border-slate-100":"border-slate-700 text-slate-400 hover:border-slate-500"}`}>{l}</button>
         ))}
+        <span className="text-[10.5px] text-slate-600 font-mono self-center ml-1">{filtered.length} equipment</span>
       </div>
 
       <div className="rounded-xl border border-slate-800 overflow-hidden">
@@ -776,7 +1450,7 @@ function EquipmentTab({ equipment, openIncidentByEq, onOpenEq, onUpdate, canEdit
           <thead>
             <tr className="bg-slate-900 text-slate-400 text-[11px] uppercase tracking-wide">
               <th className="text-left px-4 py-2.5 font-medium">Equipment</th>
-              <th className="text-left px-4 py-2.5 font-medium hidden md:table-cell">Sub-Area</th>
+              <th className="text-left px-4 py-2.5 font-medium hidden md:table-cell">Area</th>
               <th className="text-left px-4 py-2.5 font-medium">Status</th>
               <th className="text-left px-4 py-2.5 font-medium hidden lg:table-cell">Remark</th>
               <th className="text-left px-4 py-2.5 font-medium hidden sm:table-cell">Last Update</th>
@@ -784,29 +1458,81 @@ function EquipmentTab({ equipment, openIncidentByEq, onOpenEq, onUpdate, canEdit
             </tr>
           </thead>
           <tbody className="divide-y divide-slate-800">
-            {filtered.map((eq) => (
+            {pageItems.map((eq) => (
               <tr key={eq.id} className="hover:bg-slate-900/50 cursor-pointer" onClick={() => onOpenEq(eq.id)}>
-                <td className="px-4 py-2.5">
-                  <div className="font-mono text-slate-100">{eq.id}</div>
-                  <div className="text-[11px] text-slate-500">{eq.name}</div>
-                </td>
-                <td className="px-4 py-2.5 hidden md:table-cell text-slate-400 font-mono">{eq.subArea}</td>
+                <td className="px-4 py-2.5"><div className="font-mono text-slate-100">{eq.id}</div><div className="text-[11px] text-slate-500">{eq.name}</div></td>
+                <td className="px-4 py-2.5 hidden md:table-cell text-slate-400 text-xs">{areaName(eq.areaCode)}{subAreaName(subAreas, eq.subAreaId) ? <div className="text-slate-600 text-[10px]">{subAreaName(subAreas, eq.subAreaId)}</div> : null}</td>
                 <td className="px-4 py-2.5"><StatusBadge status={eq.status} /></td>
                 <td className="px-4 py-2.5 hidden lg:table-cell text-slate-400 text-xs max-w-[220px] truncate">{eq.remark}</td>
                 <td className="px-4 py-2.5 hidden sm:table-cell text-slate-500 font-mono text-xs">{fmtDateTime(eq.lastUpdate)}</td>
                 <td className="px-4 py-2.5 text-right">
-                  {canEdit && (
-                    <button
-                      onClick={(e) => { e.stopPropagation(); onUpdate(eq); }}
-                      className="text-xs bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-md px-2.5 py-1.5"
-                    >Update</button>
-                  )}
+                  {canEdit && <button onClick={(e) => { e.stopPropagation(); onUpdate(eq); }} className="text-xs bg-slate-800 hover:bg-slate-700 text-slate-200 rounded-md px-2.5 py-1.5">Update</button>}
                 </td>
               </tr>
             ))}
-            {filtered.length === 0 && (
-              <tr><td colSpan={6} className="text-center text-slate-500 py-8 text-sm">No equipment matches this filter.</td></tr>
-            )}
+            {pageItems.length === 0 && <tr><td colSpan={6} className="text-center text-slate-500 py-8 text-sm">No equipment matches this filter.</td></tr>}
+          </tbody>
+        </table>
+      </div>
+
+      {totalPages > 1 && (
+        <div className="flex items-center justify-between text-xs text-slate-400">
+          <span>Page {page} of {totalPages}</span>
+          <div className="flex gap-2">
+            <button disabled={page===1} onClick={() => setPage((p) => p-1)} className="px-2.5 py-1 border border-slate-700 rounded-md disabled:opacity-30">Prev</button>
+            <button disabled={page===totalPages} onClick={() => setPage((p) => p+1)} className="px-2.5 py-1 border border-slate-700 rounded-md disabled:opacity-30">Next</button>
+          </div>
+        </div>
+      )}
+    </div>
+  );
+}
+
+/* ---------------------------------------------------------------------- */
+/* History tab                                                             */
+/* ---------------------------------------------------------------------- */
+
+function HistoryTab({ history, triggerPrint }) {
+  const [q, setQ] = useState("");
+  const filtered = history.filter((h) => !q || `${h.equipmentId} ${h.remark}`.toLowerCase().includes(q.toLowerCase()));
+
+  function exportExcel() {
+    const rows = filtered.map((h) => ({ "Timestamp": fmtDateTime(h.timestamp), "Equipment": h.equipmentId, "From": STATUS[h.from].label, "To": STATUS[h.to].label, "Remark": h.remark, "User": h.user }));
+    exportRowsToExcel(`ERCT_History_${Date.now()}.xlsx`, "History", rows);
+  }
+  function exportPdf() {
+    triggerPrint("Equipment Status History", [
+      { key: "timestamp", label: "Timestamp" }, { key: "equipmentId", label: "Equipment" }, { key: "change", label: "Change" }, { key: "remark", label: "Remark" }, { key: "user", label: "User" },
+    ], filtered.map((h) => ({ timestamp: fmtDateTime(h.timestamp), equipmentId: h.equipmentId, change: `${STATUS[h.from].label} -> ${STATUS[h.to].label}`, remark: h.remark, user: h.user })));
+  }
+
+  return (
+    <div className="p-4 sm:p-5 space-y-3">
+      <div className="flex items-center justify-between">
+        <h2 className="text-sm font-semibold text-slate-100">Equipment Status History</h2>
+        <div className="flex gap-1.5">
+          <button onClick={exportExcel} className="flex items-center gap-1.5 bg-slate-900 border border-slate-700 text-slate-300 rounded-md px-2.5 py-1.5 text-xs hover:border-slate-500"><FileSpreadsheet size={13} /> Excel</button>
+          <button onClick={exportPdf} className="flex items-center gap-1.5 bg-slate-900 border border-slate-700 text-slate-300 rounded-md px-2.5 py-1.5 text-xs hover:border-slate-500"><Printer size={13} /> PDF</button>
+        </div>
+      </div>
+      <div className="relative max-w-sm">
+        <Search size={14} className="absolute left-2.5 top-2.5 text-slate-500" />
+        <input value={q} onChange={(e) => setQ(e.target.value)} placeholder="Search by equipment ID or remark…" className="w-full bg-slate-900 border border-slate-700 rounded-md pl-8 pr-3 py-2 text-sm text-slate-200" />
+      </div>
+      <div className="rounded-xl border border-slate-800 overflow-hidden">
+        <table className="w-full text-xs">
+          <thead><tr className="bg-slate-900 text-slate-400 uppercase text-[10.5px]"><th className="text-left px-3 py-2">Timestamp</th><th className="text-left px-3 py-2">Equipment</th><th className="text-left px-3 py-2">Change</th><th className="text-left px-3 py-2">Remark</th><th className="text-left px-3 py-2">User</th></tr></thead>
+          <tbody className="divide-y divide-slate-800">
+            {filtered.slice(0, 200).map((h) => (
+              <tr key={h.id} className="hover:bg-slate-900/50">
+                <td className="px-3 py-2 font-mono text-slate-500">{fmtDateTime(h.timestamp)}</td>
+                <td className="px-3 py-2 font-mono text-slate-200">{h.equipmentId}</td>
+                <td className="px-3 py-2"><StatusBadge status={h.from} /> <ChevronRight size={11} className="inline text-slate-600" /> <StatusBadge status={h.to} /></td>
+                <td className="px-3 py-2 text-slate-400 max-w-[220px] truncate">{h.remark}</td>
+                <td className="px-3 py-2 text-slate-300">{h.user}</td>
+              </tr>
+            ))}
+            {filtered.length === 0 && <tr><td colSpan={5} className="text-center text-slate-500 py-8">No history in scope.</td></tr>}
           </tbody>
         </table>
       </div>
@@ -818,107 +1544,67 @@ function EquipmentTab({ equipment, openIncidentByEq, onOpenEq, onUpdate, canEdit
 /* Detail drawer                                                           */
 /* ---------------------------------------------------------------------- */
 
-function DetailDrawer({ eq, incident, history, onClose, onUpdate, onAddProgress, canEdit, now }) {
+function DetailDrawer({ eq, incident, history, onClose, onUpdate, onAddProgress, canEdit, now, subAreas }) {
   const [note, setNote] = useState("");
   const priority = incident ? getPriority(eq, incident, now) : null;
-
+  const subName = subAreaName(subAreas, eq.subAreaId);
   return (
     <div className="fixed inset-0 z-40 flex justify-end">
       <div className="absolute inset-0 bg-black/60" onClick={onClose} />
       <div className="relative w-full max-w-md bg-slate-950 border-l border-slate-800 h-full overflow-y-auto">
         <div className="sticky top-0 bg-slate-950 border-b border-slate-800 px-4 py-3 flex items-center gap-2 z-10">
-          <div className="flex-1 min-w-0">
-            <div className="font-mono text-slate-100 text-sm">{eq.id}</div>
-            <div className="text-xs text-slate-500 truncate">{eq.name}</div>
-          </div>
+          <div className="flex-1 min-w-0"><div className="font-mono text-slate-100 text-sm">{eq.id}</div><div className="text-xs text-slate-500 truncate">{eq.name} · {areaName(eq.areaCode)}{subName ? ` / ${subName}` : ""}</div></div>
           <button onClick={onClose} className="text-slate-500 hover:text-slate-200"><X size={18} /></button>
         </div>
-
         <div className="p-4 space-y-4">
           <StatusBadge status={eq.status} size="lg" />
-
           <div className="grid grid-cols-2 gap-3 text-xs">
-            <Info label="Category" value={eq.category} />
-            <Info label="Sub-Area" value={eq.subArea} />
-            <Info label="Criticality" value={eq.criticality} />
+            <Info label="Category" value={eq.category} /><Info label="Area" value={areaName(eq.areaCode)} />
+            <Info label="Sub Area" value={subName || "-"} /><Info label="Criticality" value={eq.criticality} />
             <Info label="Last Update" value={fmtDateTime(eq.lastUpdate)} />
           </div>
+          {!canEdit && <div className="text-[10.5px] text-amber-400 bg-amber-400/10 ring-1 ring-amber-400/30 rounded-md px-2.5 py-1.5">Read-only — outside your assigned area(s) or role.</div>}
 
           {incident && (
             <div className="rounded-lg border border-red-500/30 bg-red-500/5 p-3 space-y-2">
               <div className="flex items-center justify-between">
                 <span className="text-xs font-mono text-red-400 font-semibold">{incident.id}</span>
-                {priority && (
-                  <span className={`text-[10px] font-mono font-bold rounded px-1.5 py-0.5 ${priority.level === "CRITICAL" ? "bg-red-500 text-white" : "bg-amber-400 text-slate-900"}`}>
-                    {priority.level}
-                  </span>
-                )}
+                {priority && <span className={`text-[10px] font-mono font-bold rounded px-1.5 py-0.5 ${priority.level==="CRITICAL"?"bg-red-500 text-white":"bg-amber-400 text-slate-900"}`}>{priority.level}</span>}
               </div>
-              <Info label="Problem" value={incident.problem} />
-              <Info label="PIC" value={incident.pic} />
+              <Info label="Problem" value={incident.problem} /><Info label="PIC" value={incident.pic} />
               <Info label="Breakdown Since" value={fmtDateTime(incident.startTime)} />
               <Info label="Current Downtime" value={fmtDuration(now - new Date(incident.startTime).getTime())} />
-              {incident.eta && (
-                <Info label="ETA Status" value={priority?.etaExceeded ? `OVERDUE ${fmtDuration(now - new Date(incident.eta).getTime())}` : `Target ${fmtDateTime(incident.eta)}`} warn={priority?.etaExceeded} />
-              )}
+              {incident.eta && <Info label="ETA Status" value={priority?.etaExceeded ? `OVERDUE ${fmtDuration(now - new Date(incident.eta).getTime())}` : `Target ${fmtDateTime(incident.eta)}`} warn={priority?.etaExceeded} />}
               {priority?.stale && <div className="text-[10px] font-mono text-amber-400">⚠ No progress update in over 2 hours</div>}
-
               <div className="pt-1 border-t border-red-500/20 space-y-1.5 max-h-32 overflow-y-auto">
-                {incident.updates.map((u, i) => (
-                  <div key={i} className="text-[11px] text-slate-400">
-                    <span className="font-mono text-slate-500">{fmtDateTime(u.timestamp)}</span> — {u.note} <span className="text-slate-600">({u.user})</span>
-                  </div>
-                ))}
+                {incident.updates.map((u, i) => <div key={i} className="text-[11px] text-slate-400"><span className="font-mono text-slate-500">{fmtDateTime(u.timestamp)}</span> — {u.note} <span className="text-slate-600">({u.user})</span></div>)}
                 {incident.updates.length === 0 && <div className="text-[11px] text-slate-600">No progress updates yet.</div>}
               </div>
-
               {canEdit && (
                 <div className="flex gap-1.5 pt-1">
-                  <input
-                    value={note} onChange={(e) => setNote(e.target.value)} placeholder="Add progress note…"
-                    className="flex-1 bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-1 focus:ring-cyan-500/50"
-                  />
-                  <button
-                    onClick={() => { if (note.trim()) { onAddProgress(note.trim()); setNote(""); } }}
-                    className="text-xs bg-slate-800 hover:bg-slate-700 text-slate-200 rounded px-2.5"
-                  >Add</button>
+                  <input value={note} onChange={(e) => setNote(e.target.value)} placeholder="Add progress note…" className="flex-1 bg-slate-900 border border-slate-700 rounded px-2 py-1.5 text-xs text-slate-200 placeholder-slate-600" />
+                  <button onClick={() => { if (note.trim()) { onAddProgress(note.trim()); setNote(""); } }} className="text-xs bg-slate-800 hover:bg-slate-700 text-slate-200 rounded px-2.5">Add</button>
                 </div>
               )}
             </div>
           )}
-
-          {canEdit && (
-            <button onClick={onUpdate} className="w-full bg-cyan-500/10 text-cyan-300 ring-1 ring-cyan-500/30 rounded-lg py-2.5 text-sm font-medium hover:bg-cyan-500/20">
-              Update Status
-            </button>
-          )}
-
+          {canEdit && <button onClick={onUpdate} className="w-full bg-cyan-500/10 text-cyan-300 ring-1 ring-cyan-500/30 rounded-lg py-2.5 text-sm font-medium hover:bg-cyan-500/20">Update Status</button>}
           <div>
-            <div className="flex items-center gap-1.5 text-xs text-slate-400 mb-2 font-medium"><HistoryIcon size={13} /> Status History</div>
+            <div className="flex items-center gap-1.5 text-xs text-slate-400 mb-2 font-medium"><HistoryIcon size={13} /> Status History (immutable)</div>
             <div className="space-y-2 max-h-64 overflow-y-auto">
               {history.length === 0 && <div className="text-xs text-slate-600">No history recorded.</div>}
               {history.map((h) => (
-                <div key={h.id} className="text-xs flex items-start gap-2 border-l-2 border-slate-800 pl-2.5 py-0.5">
-                  <div>
-                    <div className="text-slate-300"><StatusBadge status={h.from} /> <ChevronRight size={11} className="inline text-slate-600" /> <StatusBadge status={h.to} /></div>
-                    <div className="text-slate-500 mt-1">{h.remark}</div>
-                    <div className="text-slate-600 font-mono text-[10.5px]">{fmtDateTime(h.timestamp)} · {h.user}</div>
-                  </div>
+                <div key={h.id} className="text-xs border-l-2 border-slate-800 pl-2.5 py-0.5">
+                  <div className="text-slate-300"><StatusBadge status={h.from} /> <ChevronRight size={11} className="inline text-slate-600" /> <StatusBadge status={h.to} /></div>
+                  <div className="text-slate-500 mt-1">{h.remark}</div>
+                  <div className="text-slate-600 font-mono text-[10.5px]">{fmtDateTime(h.timestamp)} · {h.user}</div>
+                  {h.photoUrl && <img src={h.photoUrl} alt="update attachment" className="mt-1.5 h-14 w-14 object-cover rounded-md border border-slate-800" />}
                 </div>
               ))}
             </div>
           </div>
         </div>
       </div>
-    </div>
-  );
-}
-
-function Info({ label, value, warn }) {
-  return (
-    <div>
-      <div className="text-[10px] text-slate-500 uppercase tracking-wide">{label}</div>
-      <div className={`font-mono ${warn ? "text-red-400" : "text-slate-200"}`}>{value}</div>
     </div>
   );
 }
@@ -933,9 +1619,19 @@ function UpdateStatusModal({ eq, incident, onClose, onSubmit }) {
   const [problemCategory, setProblemCategory] = useState("Electrical");
   const [pic, setPic] = useState("");
   const [eta, setEta] = useState("");
-
+  const [photoUrl, setPhotoUrl] = useState(null);
+  const [photoBusy, setPhotoBusy] = useState(false);
   const goingToBreakdown = newStatus === "BREAKDOWN" && eq.status !== "BREAKDOWN";
   const recovering = eq.status === "BREAKDOWN" && newStatus === "READY";
+
+  async function handlePhoto(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setPhotoBusy(true);
+    try { setPhotoUrl(await compressImageFile(file)); }
+    catch { setPhotoUrl(null); }
+    setPhotoBusy(false);
+  }
 
   return (
     <Modal onClose={onClose} title={`Update Status — ${eq.id}`}>
@@ -944,63 +1640,53 @@ function UpdateStatusModal({ eq, incident, onClose, onSubmit }) {
           <label className="text-[11px] text-slate-500 uppercase tracking-wide">New Status</label>
           <div className="grid grid-cols-2 gap-1.5 mt-1.5">
             {Object.keys(STATUS).map((s) => (
-              <button
-                key={s} onClick={() => setNewStatus(s)}
-                className={`text-xs font-mono rounded-md px-2 py-2 border transition-colors ${
-                  newStatus === s ? `${STATUS[s].soft} ${STATUS[s].text} ring-1 ${STATUS[s].ring} border-transparent` : "border-slate-700 text-slate-400 hover:border-slate-500"
-                }`}
-              >{STATUS[s].label}</button>
+              <button key={s} onClick={() => setNewStatus(s)} className={`text-xs font-mono rounded-md px-2 py-2 border transition-colors ${newStatus===s?`${STATUS[s].soft} ${STATUS[s].text} ring-1 ${STATUS[s].ring} border-transparent`:"border-slate-700 text-slate-400 hover:border-slate-500"}`}>{STATUS[s].label}</button>
             ))}
           </div>
         </div>
-
         <div>
           <label className="text-[11px] text-slate-500 uppercase tracking-wide">{goingToBreakdown ? "Problem Description" : "Remark"}</label>
-          <textarea
-            value={remark} onChange={(e) => setRemark(e.target.value)} rows={2}
-            placeholder={goingToBreakdown ? "Describe the failure…" : "Optional remark…"}
-            className="w-full mt-1 bg-slate-900 border border-slate-700 rounded-md px-2.5 py-2 text-sm text-slate-200 placeholder-slate-600 focus:outline-none focus:ring-2 focus:ring-cyan-500/50"
-          />
+          <textarea value={remark} onChange={(e) => setRemark(e.target.value)} rows={2} placeholder={goingToBreakdown ? "Describe the failure…" : "Optional remark…"} className="w-full mt-1 bg-slate-900 border border-slate-700 rounded-md px-2.5 py-2 text-sm text-slate-200 placeholder-slate-600" />
         </div>
-
         {goingToBreakdown && (
           <>
             <div className="grid grid-cols-2 gap-2">
-              <div>
-                <label className="text-[11px] text-slate-500 uppercase tracking-wide">Problem Category</label>
+              <div><label className="text-[11px] text-slate-500 uppercase tracking-wide">Problem Category</label>
                 <select value={problemCategory} onChange={(e) => setProblemCategory(e.target.value)} className="w-full mt-1 bg-slate-900 border border-slate-700 rounded-md px-2 py-2 text-sm text-slate-200">
-                  {["Electrical", "Mechanical", "Hydraulic", "Structural", "Software", "Other"].map((c) => <option key={c}>{c}</option>)}
-                </select>
-              </div>
-              <div>
-                <label className="text-[11px] text-slate-500 uppercase tracking-wide">PIC</label>
-                <input value={pic} onChange={(e) => setPic(e.target.value)} placeholder="Maintenance team / name" className="w-full mt-1 bg-slate-900 border border-slate-700 rounded-md px-2.5 py-2 text-sm text-slate-200 placeholder-slate-600" />
-              </div>
+                  {["Electrical","Mechanical","Hydraulic","Structural","Software","Other"].map((c) => <option key={c}>{c}</option>)}
+                </select></div>
+              <div><label className="text-[11px] text-slate-500 uppercase tracking-wide">PIC</label>
+                <input value={pic} onChange={(e) => setPic(e.target.value)} placeholder="Maintenance team / name" className="w-full mt-1 bg-slate-900 border border-slate-700 rounded-md px-2.5 py-2 text-sm text-slate-200" /></div>
             </div>
-            <div>
-              <label className="text-[11px] text-slate-500 uppercase tracking-wide">Target Recovery (ETA)</label>
-              <input type="datetime-local" value={eta} onChange={(e) => setEta(e.target.value)} className="w-full mt-1 bg-slate-900 border border-slate-700 rounded-md px-2.5 py-2 text-sm text-slate-200" />
-            </div>
-            <div className="flex items-center gap-1.5 text-[11px] text-slate-500"><Camera size={12} /> Photo attachment available in P1 (post-pilot)</div>
+            <div><label className="text-[11px] text-slate-500 uppercase tracking-wide">Target Recovery (ETA)</label>
+              <input type="datetime-local" value={eta} onChange={(e) => setEta(e.target.value)} className="w-full mt-1 bg-slate-900 border border-slate-700 rounded-md px-2.5 py-2 text-sm text-slate-200" /></div>
           </>
         )}
-
+        <div>
+          <label className="text-[11px] text-slate-500 uppercase tracking-wide flex items-center gap-1.5"><Camera size={12} /> Photo (optional)</label>
+          {photoUrl ? (
+            <div className="mt-1.5 flex items-center gap-2">
+              <img src={photoUrl} alt="attachment preview" className="h-16 w-16 object-cover rounded-md border border-slate-700" />
+              <button onClick={() => setPhotoUrl(null)} className="text-xs text-red-400 hover:text-red-300">Remove</button>
+            </div>
+          ) : (
+            <label className="mt-1.5 flex items-center gap-2 border border-dashed border-slate-700 rounded-md px-3 py-2 text-xs text-slate-500 cursor-pointer hover:border-slate-500">
+              <Camera size={14} /> {photoBusy ? "Processing…" : "Attach photo"}
+              <input type="file" accept="image/*" capture="environment" className="hidden" onChange={handlePhoto} />
+            </label>
+          )}
+          <div className="text-[10px] text-slate-600 mt-1">Compressed client-side for the prototype's local storage — production needs real cloud file storage.</div>
+        </div>
         {recovering && incident && (
           <div className="text-xs text-emerald-400 bg-emerald-500/10 ring-1 ring-emerald-500/30 rounded-md px-2.5 py-2">
-            Recovering will close {incident.id} and log downtime of {fmtDuration(Date.now() - new Date(incident.startTime).getTime())}.
+            Recovering closes {incident.id} and logs downtime of {fmtDuration(Date.now() - new Date(incident.startTime).getTime())}.
           </div>
         )}
-
         <div className="flex gap-2 pt-2">
           <button onClick={onClose} className="flex-1 border border-slate-700 text-slate-300 rounded-md py-2 text-sm hover:bg-slate-900">Cancel</button>
-          <button
-            disabled={goingToBreakdown && !remark.trim()}
-            onClick={() => onSubmit({
-              eq, newStatus, remark: remark.trim() || eq.remark,
-              problemCategory, pic, eta: eta ? new Date(eta).toISOString() : null,
-            })}
-            className="flex-1 bg-cyan-500 hover:bg-cyan-400 disabled:opacity-40 disabled:cursor-not-allowed text-slate-950 font-medium rounded-md py-2 text-sm"
-          >Save</button>
+          <button disabled={goingToBreakdown && !remark.trim()}
+            onClick={() => onSubmit({ eq, newStatus, remark: remark.trim() || eq.remark, problemCategory, pic, eta: eta ? new Date(eta).toISOString() : null, photoUrl })}
+            className="flex-1 bg-cyan-500 hover:bg-cyan-400 disabled:opacity-40 text-slate-950 font-medium rounded-md py-2 text-sm">Save</button>
         </div>
       </div>
     </Modal>
@@ -1011,54 +1697,49 @@ function UpdateStatusModal({ eq, incident, onClose, onSubmit }) {
 /* Add equipment modal                                                     */
 /* ---------------------------------------------------------------------- */
 
-function AddEquipmentModal({ onClose, onSubmit }) {
+function AddEquipmentModal({ onClose, onSubmit, scopedAreaCodes, categories, subAreas }) {
   const [id, setId] = useState("");
   const [name, setName] = useState("");
-  const [category, setCategory] = useState("QCC");
-  const [subArea, setSubArea] = useState("T1");
+  const [category, setCategory] = useState(categories[0]?.code || "QCC");
+  const [areaCode, setAreaCode] = useState(scopedAreaCodes[0] || AREAS[0].code);
+  const [subAreaId, setSubAreaId] = useState("");
   const [criticality, setCriticality] = useState("normal");
-
+  const availableSubAreas = subAreas.filter((s) => s.areaCode === areaCode && s.active);
   return (
     <Modal onClose={onClose} title="Add Equipment (Master Data)">
       <div className="space-y-3">
         <div className="grid grid-cols-2 gap-2">
-          <div>
-            <label className="text-[11px] text-slate-500 uppercase tracking-wide">Equipment ID</label>
-            <input value={id} onChange={(e) => setId(e.target.value.toUpperCase())} placeholder="e.g. QCC-07" className="w-full mt-1 bg-slate-900 border border-slate-700 rounded-md px-2.5 py-2 text-sm text-slate-200 font-mono" />
-          </div>
-          <div>
-            <label className="text-[11px] text-slate-500 uppercase tracking-wide">Category</label>
+          <div><label className="text-[11px] text-slate-500 uppercase tracking-wide">Equipment Code</label>
+            <input value={id} onChange={(e) => setId(e.target.value.toUpperCase())} placeholder="e.g. PNJ-QCC07" className="w-full mt-1 bg-slate-900 border border-slate-700 rounded-md px-2.5 py-2 text-sm text-slate-200 font-mono" /></div>
+          <div><label className="text-[11px] text-slate-500 uppercase tracking-wide">Category</label>
             <select value={category} onChange={(e) => setCategory(e.target.value)} className="w-full mt-1 bg-slate-900 border border-slate-700 rounded-md px-2 py-2 text-sm text-slate-200">
-              {["QCC", "RTG", "RMGC", "RS", "HDT"].map((c) => <option key={c}>{c}</option>)}
-            </select>
-          </div>
+              {categories.map((c) => <option key={c.code}>{c.code}</option>)}
+            </select></div>
+        </div>
+        <div><label className="text-[11px] text-slate-500 uppercase tracking-wide">Name</label>
+          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Full equipment name" className="w-full mt-1 bg-slate-900 border border-slate-700 rounded-md px-2.5 py-2 text-sm text-slate-200" /></div>
+        <div className="grid grid-cols-2 gap-2">
+          <div><label className="text-[11px] text-slate-500 uppercase tracking-wide">Operational Area</label>
+            <select value={areaCode} onChange={(e) => { setAreaCode(e.target.value); setSubAreaId(""); }} className="w-full mt-1 bg-slate-900 border border-slate-700 rounded-md px-2 py-2 text-sm text-slate-200">
+              {AREAS.filter((a) => scopedAreaCodes.includes(a.code)).map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}
+            </select></div>
+          <div><label className="text-[11px] text-slate-500 uppercase tracking-wide">Criticality</label>
+            <select value={criticality} onChange={(e) => setCriticality(e.target.value)} className="w-full mt-1 bg-slate-900 border border-slate-700 rounded-md px-2 py-2 text-sm text-slate-200">
+              <option value="normal">Normal</option><option value="high">High</option><option value="critical">Critical</option>
+            </select></div>
         </div>
         <div>
-          <label className="text-[11px] text-slate-500 uppercase tracking-wide">Name</label>
-          <input value={name} onChange={(e) => setName(e.target.value)} placeholder="Full equipment name" className="w-full mt-1 bg-slate-900 border border-slate-700 rounded-md px-2.5 py-2 text-sm text-slate-200" />
-        </div>
-        <div className="grid grid-cols-2 gap-2">
-          <div>
-            <label className="text-[11px] text-slate-500 uppercase tracking-wide">Sub-Area</label>
-            <select value={subArea} onChange={(e) => setSubArea(e.target.value)} className="w-full mt-1 bg-slate-900 border border-slate-700 rounded-md px-2 py-2 text-sm text-slate-200">
-              {SUB_AREAS.map((s) => <option key={s}>{s}</option>)}
-            </select>
-          </div>
-          <div>
-            <label className="text-[11px] text-slate-500 uppercase tracking-wide">Criticality</label>
-            <select value={criticality} onChange={(e) => setCriticality(e.target.value)} className="w-full mt-1 bg-slate-900 border border-slate-700 rounded-md px-2 py-2 text-sm text-slate-200">
-              <option value="normal">Normal</option>
-              <option value="critical">Critical</option>
-            </select>
-          </div>
+          <label className="text-[11px] text-slate-500 uppercase tracking-wide">Sub Area (optional)</label>
+          <select value={subAreaId} onChange={(e) => setSubAreaId(e.target.value)} className="w-full mt-1 bg-slate-900 border border-slate-700 rounded-md px-2 py-2 text-sm text-slate-200">
+            <option value="">— none —</option>
+            {availableSubAreas.map((s) => <option key={s.id} value={s.id}>{s.name}</option>)}
+          </select>
+          {availableSubAreas.length === 0 && <div className="text-[10.5px] text-slate-600 mt-1">No sub areas defined for this operational area yet — add them under Administration → Sub Areas.</div>}
         </div>
         <div className="flex gap-2 pt-2">
           <button onClick={onClose} className="flex-1 border border-slate-700 text-slate-300 rounded-md py-2 text-sm hover:bg-slate-900">Cancel</button>
-          <button
-            disabled={!id.trim() || !name.trim()}
-            onClick={() => onSubmit({ id: id.trim(), name: name.trim(), category, subArea, criticality })}
-            className="flex-1 bg-cyan-500 hover:bg-cyan-400 disabled:opacity-40 text-slate-950 font-medium rounded-md py-2 text-sm"
-          >Add</button>
+          <button disabled={!id.trim() || !name.trim()} onClick={() => onSubmit({ id: id.trim(), name: name.trim(), category, areaCode, subAreaId: subAreaId || null, criticality })}
+            className="flex-1 bg-cyan-500 hover:bg-cyan-400 disabled:opacity-40 text-slate-950 font-medium rounded-md py-2 text-sm">Add</button>
         </div>
       </div>
     </Modal>
@@ -1071,14 +1752,10 @@ function AddEquipmentModal({ onClose, onSubmit }) {
 
 function HandoverTab({ handovers, onNew, canHandover }) {
   return (
-    <div className="p-5 space-y-4">
+    <div className="p-4 sm:p-5 space-y-4">
       <div className="flex items-center justify-between">
         <h2 className="text-sm font-semibold text-slate-100">Shift Handover Log</h2>
-        {canHandover && (
-          <button onClick={onNew} className="flex items-center gap-1.5 bg-cyan-500/10 text-cyan-300 ring-1 ring-cyan-500/30 rounded-md px-3 py-2 text-sm hover:bg-cyan-500/20">
-            <Plus size={14} /> New Handover
-          </button>
-        )}
+        {canHandover && <button onClick={onNew} className="flex items-center gap-1.5 bg-cyan-500/10 text-cyan-300 ring-1 ring-cyan-500/30 rounded-md px-3 py-2 text-sm hover:bg-cyan-500/20"><Plus size={14} /> New Handover</button>}
       </div>
       {handovers.length === 0 ? (
         <div className="text-center text-slate-500 text-sm py-12 border border-dashed border-slate-800 rounded-xl">No handovers recorded yet.</div>
@@ -1091,17 +1768,9 @@ function HandoverTab({ handovers, onNew, canHandover }) {
                 <div className="text-[11px] font-mono text-slate-500">{fmtDateTime(h.createdAt)}</div>
               </div>
               <div className="text-xs text-slate-400">{h.fromUser} → {h.toUser}</div>
-              <div className="grid sm:grid-cols-2 gap-2 text-xs">
-                <Info label="Opening Condition" value={h.openingSummary || "-"} />
-                <Info label="Closing Condition" value={h.closingSummary || "-"} />
-              </div>
+              <div className="grid sm:grid-cols-2 gap-2 text-xs"><Info label="Opening" value={h.openingSummary || "-"} /><Info label="Closing" value={h.closingSummary || "-"} /></div>
               <Info label="Activity During Shift" value={h.activities || "-"} />
-              {h.unresolvedIssues && (
-                <div className="rounded-md bg-amber-400/10 ring-1 ring-amber-400/30 px-2.5 py-2">
-                  <div className="text-[10px] text-amber-400 uppercase tracking-wide">Unresolved / Critical to follow-up</div>
-                  <div className="text-xs text-amber-200 mt-0.5">{h.unresolvedIssues}</div>
-                </div>
-              )}
+              {h.unresolvedIssues && <div className="rounded-md bg-amber-400/10 ring-1 ring-amber-400/30 px-2.5 py-2"><div className="text-[10px] text-amber-400 uppercase">Unresolved / Critical</div><div className="text-xs text-amber-200 mt-0.5">{h.unresolvedIssues}</div></div>}
               <div className="text-[10.5px] text-emerald-400 font-mono">✓ Accepted by {h.acceptedBy || h.toUser}</div>
             </div>
           ))}
@@ -1116,54 +1785,214 @@ function HandoverModal({ onClose, onSubmit, equipment, needAttention }) {
   const [fromUser, setFromUser] = useState("");
   const [toUser, setToUser] = useState("");
   const [activities, setActivities] = useState("");
-  const [unresolvedIssues, setUnresolvedIssues] = useState(
-    needAttention.length ? needAttention.map((n) => `${n.eq.id}: ${n.inc.problem} (${n.level})`).join("\n") : ""
-  );
-
-  const opening = `${equipment.filter((e) => e.status === "READY").length} Ready, ${equipment.filter((e) => e.status === "BREAKDOWN").length} Breakdown at handover time`;
-
+  const [unresolvedIssues, setUnresolvedIssues] = useState(needAttention.length ? needAttention.map((n) => `${n.eq.id}: ${n.inc.problem} (${n.level})`).join("\n") : "");
+  const opening = `${equipment.filter((e) => e.status==="READY").length} Ready, ${equipment.filter((e) => e.status==="BREAKDOWN").length} Breakdown at handover time`;
   return (
     <Modal onClose={onClose} title="New Shift Handover">
       <div className="space-y-3">
-        <div>
-          <label className="text-[11px] text-slate-500 uppercase tracking-wide">Shift</label>
+        <div><label className="text-[11px] text-slate-500 uppercase tracking-wide">Shift</label>
           <select value={shift} onChange={(e) => setShift(e.target.value)} className="w-full mt-1 bg-slate-900 border border-slate-700 rounded-md px-2 py-2 text-sm text-slate-200">
-            {["Shift 1 (06:00–14:00)", "Shift 2 (14:00–22:00)", "Shift 3 (22:00–06:00)"].map((s) => <option key={s}>{s}</option>)}
-          </select>
-        </div>
+            {["Shift 1 (06:00–14:00)","Shift 2 (14:00–22:00)","Shift 3 (22:00–06:00)"].map((s) => <option key={s}>{s}</option>)}
+          </select></div>
         <div className="grid grid-cols-2 gap-2">
-          <div>
-            <label className="text-[11px] text-slate-500 uppercase tracking-wide">Outgoing Admin</label>
-            <input value={fromUser} onChange={(e) => setFromUser(e.target.value)} placeholder="Name" className="w-full mt-1 bg-slate-900 border border-slate-700 rounded-md px-2.5 py-2 text-sm text-slate-200" />
-          </div>
-          <div>
-            <label className="text-[11px] text-slate-500 uppercase tracking-wide">Incoming Admin</label>
-            <input value={toUser} onChange={(e) => setToUser(e.target.value)} placeholder="Name" className="w-full mt-1 bg-slate-900 border border-slate-700 rounded-md px-2.5 py-2 text-sm text-slate-200" />
-          </div>
+          <div><label className="text-[11px] text-slate-500 uppercase tracking-wide">Outgoing Admin</label><input value={fromUser} onChange={(e) => setFromUser(e.target.value)} placeholder="Name" className="w-full mt-1 bg-slate-900 border border-slate-700 rounded-md px-2.5 py-2 text-sm text-slate-200" /></div>
+          <div><label className="text-[11px] text-slate-500 uppercase tracking-wide">Incoming Admin</label><input value={toUser} onChange={(e) => setToUser(e.target.value)} placeholder="Name" className="w-full mt-1 bg-slate-900 border border-slate-700 rounded-md px-2.5 py-2 text-sm text-slate-200" /></div>
         </div>
         <Info label="Opening / Closing Condition (auto)" value={opening} />
-        <div>
-          <label className="text-[11px] text-slate-500 uppercase tracking-wide">Activity During Shift</label>
-          <textarea value={activities} onChange={(e) => setActivities(e.target.value)} rows={2} placeholder="New breakdowns, recoveries, maintenance activity…" className="w-full mt-1 bg-slate-900 border border-slate-700 rounded-md px-2.5 py-2 text-sm text-slate-200 placeholder-slate-600" />
-        </div>
-        <div>
-          <label className="text-[11px] text-slate-500 uppercase tracking-wide">Unresolved / Critical Issues</label>
-          <textarea value={unresolvedIssues} onChange={(e) => setUnresolvedIssues(e.target.value)} rows={2} className="w-full mt-1 bg-slate-900 border border-slate-700 rounded-md px-2.5 py-2 text-sm text-slate-200" />
-        </div>
+        <div><label className="text-[11px] text-slate-500 uppercase tracking-wide">Activity During Shift</label><textarea value={activities} onChange={(e) => setActivities(e.target.value)} rows={2} placeholder="New breakdowns, recoveries, maintenance…" className="w-full mt-1 bg-slate-900 border border-slate-700 rounded-md px-2.5 py-2 text-sm text-slate-200" /></div>
+        <div><label className="text-[11px] text-slate-500 uppercase tracking-wide">Unresolved / Critical Issues</label><textarea value={unresolvedIssues} onChange={(e) => setUnresolvedIssues(e.target.value)} rows={2} className="w-full mt-1 bg-slate-900 border border-slate-700 rounded-md px-2.5 py-2 text-sm text-slate-200" /></div>
         <div className="flex gap-2 pt-2">
           <button onClick={onClose} className="flex-1 border border-slate-700 text-slate-300 rounded-md py-2 text-sm hover:bg-slate-900">Cancel</button>
-          <button
-            disabled={!fromUser.trim() || !toUser.trim()}
-            onClick={() => onSubmit({
-              shift, fromUser: fromUser.trim(), toUser: toUser.trim(),
-              openingSummary: opening, closingSummary: opening, activities, unresolvedIssues,
-              acceptedBy: toUser.trim(),
-            })}
-            className="flex-1 bg-cyan-500 hover:bg-cyan-400 disabled:opacity-40 text-slate-950 font-medium rounded-md py-2 text-sm"
-          >Accept & Submit</button>
+          <button disabled={!fromUser.trim() || !toUser.trim()}
+            onClick={() => onSubmit({ shift, fromUser: fromUser.trim(), toUser: toUser.trim(), openingSummary: opening, closingSummary: opening, activities, unresolvedIssues, acceptedBy: toUser.trim() })}
+            className="flex-1 bg-cyan-500 hover:bg-cyan-400 disabled:opacity-40 text-slate-950 font-medium rounded-md py-2 text-sm">Accept & Submit</button>
         </div>
       </div>
     </Modal>
+  );
+}
+
+/* ---------------------------------------------------------------------- */
+/* Administration tab (System Admin / Super Admin — Section C, D, E)       */
+/* ---------------------------------------------------------------------- */
+
+function genTempPassword(username) {
+  const rand = Math.random().toString(36).slice(2, 6).toUpperCase();
+  return `Ipctpk#${(username || "user").slice(0, 4).toUpperCase()}${rand}26`;
+}
+
+function AdminTab({ categories, users, shifts, subAreas, onAddCategory, onAddUser, onAddSubArea, onImportEquipment, areaMatrix }) {
+  const [sub, setSub] = useState("areas");
+  const [newCat, setNewCat] = useState("");
+  const [userForm, setUserForm] = useState({ name: "", username: "", role: "AREA_ADMIN", areas: [] });
+  const [revealed, setRevealed] = useState({});
+  const [subAreaForm, setSubAreaForm] = useState({ areaCode: AREAS[0].code, name: "" });
+  const [importResult, setImportResult] = useState(null);
+  const [importBusy, setImportBusy] = useState(false);
+  const fileInputRef = useRef(null);
+
+  const subTabs = [["areas","Operational Areas"],["subareas","Sub Areas"],["categories","Equipment Categories"],["users","Users"],["shifts","Shifts"],["import","Import Equipment"]];
+
+  async function handleImportFile(e) {
+    const file = e.target.files?.[0];
+    if (!file) return;
+    setImportBusy(true); setImportResult(null);
+    try {
+      const buf = await file.arrayBuffer();
+      const wb = XLSX.read(buf, { type: "array" });
+      const sheet = wb.Sheets[wb.SheetNames[0]];
+      const rows = XLSX.utils.sheet_to_json(sheet, { defval: "" });
+      const result = onImportEquipment(rows);
+      setImportResult({ ...result, total: rows.length });
+    } catch (err) {
+      setImportResult({ error: String(err.message || err) });
+    }
+    setImportBusy(false);
+    if (fileInputRef.current) fileInputRef.current.value = "";
+  }
+
+  return (
+    <div className="p-4 sm:p-5 space-y-4">
+      <h2 className="text-sm font-semibold text-slate-100">Administration — Master Data</h2>
+      <div className="flex gap-1.5 flex-wrap">
+        {subTabs.map(([k,l]) => <button key={k} onClick={() => setSub(k)} className={`text-xs px-3 py-1.5 rounded-full border ${sub===k?"bg-slate-100 text-slate-900 border-slate-100":"border-slate-700 text-slate-400"}`}>{l}</button>)}
+      </div>
+
+      {sub === "areas" && (
+        <div className="rounded-xl border border-slate-800 overflow-hidden">
+          <table className="w-full text-xs">
+            <thead><tr className="bg-slate-900 text-slate-400 uppercase text-[10.5px]"><th className="text-left px-3 py-2">Area</th><th className="text-left px-3 py-2">Code</th><th className="text-left px-3 py-2">Full Code</th><th className="text-left px-3 py-2">Admin Model</th><th className="text-right px-3 py-2">Baseline Count</th></tr></thead>
+            <tbody className="divide-y divide-slate-800">
+              {areaMatrix.map((a) => <tr key={a.code}><td className="px-3 py-2 text-slate-200">{a.name}</td><td className="px-3 py-2 font-mono text-slate-400">{a.code}</td><td className="px-3 py-2 font-mono text-slate-600 text-[10.5px]">{a.fullCode}</td><td className="px-3 py-2 text-slate-400">{a.adminModel}</td><td className="px-3 py-2 text-right font-mono text-slate-300">{a.count}</td></tr>)}
+            </tbody>
+          </table>
+          <div className="px-3 py-2 text-[10.5px] text-slate-600 border-t border-slate-800">13 operational areas per PRD §2 baseline. Editing/deactivating areas is a Super Admin action — add real create/edit here once connected to a backend.</div>
+        </div>
+      )}
+
+      {sub === "categories" && (
+        <div className="space-y-3">
+          <div className="flex gap-2">
+            <input value={newCat} onChange={(e) => setNewCat(e.target.value.toUpperCase())} placeholder="New category code, e.g. STS" className="bg-slate-900 border border-slate-700 rounded-md px-2.5 py-2 text-sm text-slate-200 font-mono" />
+            <button disabled={!newCat.trim()} onClick={() => { onAddCategory(newCat.trim()); setNewCat(""); }} className="bg-cyan-500 hover:bg-cyan-400 disabled:opacity-40 text-slate-950 font-medium rounded-md px-3 py-2 text-sm">Add</button>
+          </div>
+          <div className="flex flex-wrap gap-1.5">{categories.map((c) => <span key={c.code} className="text-xs font-mono bg-slate-900 border border-slate-700 rounded-md px-2.5 py-1 text-slate-300">{c.code}</span>)}</div>
+        </div>
+      )}
+
+      {sub === "users" && (
+        <div className="space-y-3">
+          <div className="text-[10.5px] text-amber-400 bg-amber-400/10 ring-1 ring-amber-400/30 rounded-md px-2.5 py-1.5">
+            Temporary passwords, plaintext in browser storage — fine for demoing this prototype, <strong>not safe for real production</strong>. A real deployment needs hashed passwords / SSO (PRD §18) and users should rotate these on first real login.
+          </div>
+          <div className="rounded-xl border border-slate-800 p-3 space-y-2">
+            <div className="grid sm:grid-cols-2 gap-2">
+              <input value={userForm.name} onChange={(e) => setUserForm({ ...userForm, name: e.target.value })} placeholder="Full name" className="bg-slate-900 border border-slate-700 rounded-md px-2.5 py-2 text-sm text-slate-200" />
+              <input value={userForm.username} onChange={(e) => setUserForm({ ...userForm, username: e.target.value.toLowerCase() })} placeholder="username" className="bg-slate-900 border border-slate-700 rounded-md px-2.5 py-2 text-sm text-slate-200 font-mono" />
+            </div>
+            <select value={userForm.role} onChange={(e) => setUserForm({ ...userForm, role: e.target.value })} className="w-full bg-slate-900 border border-slate-700 rounded-md px-2 py-2 text-sm text-slate-200">
+              {Object.entries(ROLES).map(([k,r]) => <option key={k} value={k}>{r.label}</option>)}
+            </select>
+            <div className="flex flex-wrap gap-2 max-h-24 overflow-y-auto">
+              {AREAS.map((a) => (
+                <label key={a.code} className="flex items-center gap-1 text-[11px] text-slate-400">
+                  <input type="checkbox" checked={userForm.areas.includes(a.code)} onChange={() => setUserForm((f) => ({ ...f, areas: f.areas.includes(a.code) ? f.areas.filter((c) => c!==a.code) : [...f.areas, a.code] }))} className="accent-cyan-500" />
+                  {a.code}
+                </label>
+              ))}
+            </div>
+            <button disabled={!userForm.name.trim() || !userForm.username.trim()}
+              onClick={() => { onAddUser({ ...userForm, tempPassword: genTempPassword(userForm.username), mustChangePassword: true }); setUserForm({ name: "", username: "", role: "AREA_ADMIN", areas: [] }); }}
+              className="bg-cyan-500 hover:bg-cyan-400 disabled:opacity-40 text-slate-950 font-medium rounded-md px-3 py-1.5 text-xs">Create User (auto-generates temp password)</button>
+          </div>
+          <div className="rounded-xl border border-slate-800 overflow-hidden">
+            <table className="w-full text-xs">
+              <thead><tr className="bg-slate-900 text-slate-400 uppercase text-[10.5px]"><th className="text-left px-3 py-2">Name</th><th className="text-left px-3 py-2">Username</th><th className="text-left px-3 py-2">Temp Password</th><th className="text-left px-3 py-2">Role</th><th className="text-left px-3 py-2">Areas</th></tr></thead>
+              <tbody className="divide-y divide-slate-800">
+                {users.map((u) => (
+                  <tr key={u.id}>
+                    <td className="px-3 py-2 text-slate-200">{u.name}</td>
+                    <td className="px-3 py-2 font-mono text-slate-400">{u.username || "-"}</td>
+                    <td className="px-3 py-2 font-mono">
+                      {u.tempPassword ? (
+                        <button onClick={() => setRevealed((r) => ({ ...r, [u.id]: !r[u.id] }))} className="text-slate-400 hover:text-slate-200">
+                          {revealed[u.id] ? u.tempPassword : "••••••••••"}
+                        </button>
+                      ) : "-"}
+                      {u.mustChangePassword && <span className="ml-1.5 text-[9px] text-amber-400">must change</span>}
+                    </td>
+                    <td className="px-3 py-2 text-slate-400">{ROLES[u.role]?.label}</td>
+                    <td className="px-3 py-2 font-mono text-slate-500">{u.areas.join(", ")}</td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+          <div className="flex justify-end">
+            <button onClick={() => exportRowsToExcel(`ERCT_Users_${Date.now()}.xlsx`, "Users", users.map((u) => ({ Name: u.name, Username: u.username, "Temp Password": u.tempPassword, Role: ROLES[u.role]?.label, Areas: u.areas.join(", ") })))}
+              className="flex items-center gap-1.5 bg-slate-900 border border-slate-700 text-slate-300 rounded-md px-2.5 py-1.5 text-xs hover:border-slate-500"><FileSpreadsheet size={13} /> Export credentials (Excel)</button>
+          </div>
+        </div>
+      )}
+
+      {sub === "shifts" && (
+        <div className="rounded-xl border border-slate-800 overflow-hidden">
+          <table className="w-full text-xs">
+            <thead><tr className="bg-slate-900 text-slate-400 uppercase text-[10.5px]"><th className="text-left px-3 py-2">Shift</th><th className="text-left px-3 py-2">Hours</th></tr></thead>
+            <tbody className="divide-y divide-slate-800">{shifts.map((s) => <tr key={s.id}><td className="px-3 py-2 text-slate-200">{s.name}</td><td className="px-3 py-2 font-mono text-slate-400">{s.hours}</td></tr>)}</tbody>
+          </table>
+          <div className="px-3 py-2 text-[10.5px] text-slate-600 border-t border-slate-800">Shift hours are configurable per operational area per PRD §24 open decision — currently a shared global default.</div>
+        </div>
+      )}
+
+      {sub === "subareas" && (
+        <div className="space-y-3">
+          <div className="rounded-xl border border-slate-800 p-3 flex flex-col sm:flex-row gap-2">
+            <select value={subAreaForm.areaCode} onChange={(e) => setSubAreaForm({ ...subAreaForm, areaCode: e.target.value })} className="bg-slate-900 border border-slate-700 rounded-md px-2 py-2 text-sm text-slate-200">
+              {AREAS.map((a) => <option key={a.code} value={a.code}>{a.name}</option>)}
+            </select>
+            <input value={subAreaForm.name} onChange={(e) => setSubAreaForm({ ...subAreaForm, name: e.target.value })} placeholder="Sub area name, e.g. Dermaga 2" className="flex-1 bg-slate-900 border border-slate-700 rounded-md px-2.5 py-2 text-sm text-slate-200" />
+            <button disabled={!subAreaForm.name.trim()} onClick={() => { onAddSubArea(subAreaForm.areaCode, subAreaForm.name.trim()); setSubAreaForm({ ...subAreaForm, name: "" }); }} className="bg-cyan-500 hover:bg-cyan-400 disabled:opacity-40 text-slate-950 font-medium rounded-md px-3 py-2 text-sm">Add</button>
+          </div>
+          <div className="rounded-xl border border-slate-800 overflow-hidden">
+            <table className="w-full text-xs">
+              <thead><tr className="bg-slate-900 text-slate-400 uppercase text-[10.5px]"><th className="text-left px-3 py-2">Sub Area</th><th className="text-left px-3 py-2">Operational Area</th></tr></thead>
+              <tbody className="divide-y divide-slate-800">
+                {subAreas.map((s) => <tr key={s.id}><td className="px-3 py-2 text-slate-200">{s.name}</td><td className="px-3 py-2 text-slate-400 font-mono">{areaName(s.areaCode)}</td></tr>)}
+                {subAreas.length === 0 && <tr><td colSpan={2} className="text-center text-slate-500 py-6">No sub areas defined yet.</td></tr>}
+              </tbody>
+            </table>
+          </div>
+          <div className="text-[10.5px] text-slate-600">Manual master data per PRD §C — Sub Area is optional on each equipment record.</div>
+        </div>
+      )}
+
+      {sub === "import" && (
+        <div className="space-y-3">
+          <div className="rounded-xl border border-dashed border-slate-700 p-5 text-center">
+            <Upload size={22} className="mx-auto text-slate-500 mb-2" />
+            <div className="text-sm text-slate-300 mb-1">Import Equipment Master from Excel / CSV</div>
+            <div className="text-[11px] text-slate-500 mb-3 max-w-md mx-auto">
+              Expected columns (header names are matched loosely): <span className="font-mono text-slate-400">Equipment Code, Equipment Name, Category, Area Code, Criticality</span>.
+              Existing codes are updated in place; new codes are created as READY. Status/history are never touched by import.
+            </div>
+            <label className="inline-flex items-center gap-1.5 bg-cyan-500/10 text-cyan-300 ring-1 ring-cyan-500/30 rounded-md px-3 py-2 text-xs cursor-pointer hover:bg-cyan-500/20">
+              <FileSpreadsheet size={14} /> {importBusy ? "Importing…" : "Choose file (.xlsx / .csv)"}
+              <input ref={fileInputRef} type="file" accept=".xlsx,.xls,.csv" className="hidden" onChange={handleImportFile} disabled={importBusy} />
+            </label>
+          </div>
+          {importResult && (
+            importResult.error ? (
+              <div className="text-xs text-red-400 bg-red-500/10 ring-1 ring-red-500/30 rounded-md px-3 py-2">Import failed: {importResult.error}</div>
+            ) : (
+              <div className="text-xs text-emerald-400 bg-emerald-500/10 ring-1 ring-emerald-500/30 rounded-md px-3 py-2">
+                Processed {importResult.total} rows — {importResult.created} created, {importResult.updated} updated, {importResult.skipped} skipped (missing/unknown code or area).
+              </div>
+            )
+          )}
+        </div>
+      )}
+    </div>
   );
 }
 
@@ -1173,51 +2002,16 @@ function HandoverModal({ onClose, onSubmit, equipment, needAttention }) {
 
 function AuditTab({ audit }) {
   return (
-    <div className="p-5 space-y-3">
+    <div className="p-4 sm:p-5 space-y-3">
       <h2 className="text-sm font-semibold text-slate-100">Audit Trail</h2>
       <div className="rounded-xl border border-slate-800 overflow-hidden">
         <table className="w-full text-xs">
-          <thead>
-            <tr className="bg-slate-900 text-slate-400 uppercase tracking-wide text-[10.5px]">
-              <th className="text-left px-3 py-2">Timestamp</th>
-              <th className="text-left px-3 py-2">User</th>
-              <th className="text-left px-3 py-2">Action</th>
-              <th className="text-left px-3 py-2">Target</th>
-              <th className="text-left px-3 py-2">Detail</th>
-            </tr>
-          </thead>
+          <thead><tr className="bg-slate-900 text-slate-400 uppercase tracking-wide text-[10.5px]"><th className="text-left px-3 py-2">Timestamp</th><th className="text-left px-3 py-2">User</th><th className="text-left px-3 py-2">Action</th><th className="text-left px-3 py-2">Target</th><th className="text-left px-3 py-2">Detail</th></tr></thead>
           <tbody className="divide-y divide-slate-800">
-            {audit.map((a) => (
-              <tr key={a.id} className="hover:bg-slate-900/50">
-                <td className="px-3 py-2 font-mono text-slate-500">{fmtDateTime(a.timestamp)}</td>
-                <td className="px-3 py-2 text-slate-300">{a.user}</td>
-                <td className="px-3 py-2 text-cyan-400">{a.action}</td>
-                <td className="px-3 py-2 font-mono text-slate-300">{a.target}</td>
-                <td className="px-3 py-2 text-slate-500">{a.detail}</td>
-              </tr>
-            ))}
+            {audit.map((a) => <tr key={a.id} className="hover:bg-slate-900/50"><td className="px-3 py-2 font-mono text-slate-500">{fmtDateTime(a.timestamp)}</td><td className="px-3 py-2 text-slate-300">{a.user}</td><td className="px-3 py-2 text-cyan-400">{a.action}</td><td className="px-3 py-2 font-mono text-slate-300">{a.target}</td><td className="px-3 py-2 text-slate-500">{a.detail}</td></tr>)}
             {audit.length === 0 && <tr><td colSpan={5} className="text-center text-slate-500 py-8">No activity recorded yet.</td></tr>}
           </tbody>
         </table>
-      </div>
-    </div>
-  );
-}
-
-/* ---------------------------------------------------------------------- */
-/* Modal shell                                                             */
-/* ---------------------------------------------------------------------- */
-
-function Modal({ title, onClose, children }) {
-  return (
-    <div className="fixed inset-0 z-50 flex items-center justify-center p-4">
-      <div className="absolute inset-0 bg-black/70" onClick={onClose} />
-      <div className="relative w-full max-w-md bg-slate-950 border border-slate-800 rounded-xl shadow-2xl max-h-[90vh] overflow-y-auto">
-        <div className="sticky top-0 bg-slate-950 border-b border-slate-800 px-4 py-3 flex items-center justify-between">
-          <h3 className="text-sm font-semibold text-slate-100">{title}</h3>
-          <button onClick={onClose} className="text-slate-500 hover:text-slate-200"><X size={18} /></button>
-        </div>
-        <div className="p-4">{children}</div>
       </div>
     </div>
   );
