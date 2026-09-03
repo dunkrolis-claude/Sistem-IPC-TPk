@@ -10,7 +10,7 @@
 <script src="https://cdn.tailwindcss.com"></script>
 <script src="https://unpkg.com/react@18/umd/react.production.min.js" crossorigin></script>
 <script src="https://unpkg.com/react-dom@18/umd/react-dom.production.min.js" crossorigin></script>
-<script src="https://cdn.sheetjs.com/xlsx-0.20.2/package/dist/xlsx.full.min.js"></script>
+<script src="https://cdn.sheetjs.com/xlsx-0.20.3/package/dist/xlsx.full.min.js"></script>
 <script src="https://unpkg.com/@babel/standalone@7.24.7/babel.min.js"></script>
 <style>
   html, body, #root { height: 100%; margin: 0; }
@@ -25,36 +25,129 @@
 <div id="root"></div>
 
 <script>
-  // Local persistence shim.
-  // Replaces the Claude-artifact "window.storage" API with browser localStorage
-  // so the app runs as a plain static site (GitHub Pages / Vercel, no backend).
-  // NOTE: data (including the demo user passwords) is saved per-browser/device
-  // only and in PLAINTEXT — fine for prototype/demo use, not for production.
-  // A real deployment needs a real backend with hashed auth (see PRD §5, §18).
+  // window.storage / window.firebaseAuth must exist SYNCHRONOUSLY (the Babel
+  // app script below may run before the async Firebase module finishes
+  // initializing), so we install thin wrappers here immediately. Each method
+  // awaits __firebaseReady, then delegates to the real implementation that
+  // the module script below installs on window.__storageImpl / __authImpl.
+  window.__firebaseReady = new Promise((resolve) => { window.__firebaseReadyResolve = resolve; });
   window.storage = {
+    get: async (key) => { await window.__firebaseReady; return window.__storageImpl.get(key); },
+    set: async (key, value) => { await window.__firebaseReady; return window.__storageImpl.set(key, value); },
+    delete: async (key) => { await window.__firebaseReady; return window.__storageImpl.delete(key); },
+    list: async (prefix) => { await window.__firebaseReady; return window.__storageImpl.list(prefix); },
+  };
+  window.firebaseAuth = {
+    signIn: async (u, p) => { await window.__firebaseReady; return window.__authImpl.signIn(u, p); },
+    signOut: async () => { await window.__firebaseReady; return window.__authImpl.signOut(); },
+    restoreSession: async () => { await window.__firebaseReady; return window.__authImpl.restoreSession(); },
+    seedDemoAccounts: async (users, onProgress) => { await window.__firebaseReady; return window.__authImpl.seedDemoAccounts(users, onProgress); },
+  };
+</script>
+
+<script type="module">
+  import { initializeApp } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-app.js";
+  import {
+    getFirestore, doc, getDoc, setDoc, deleteDoc, collection, getDocs,
+  } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-firestore.js";
+  import {
+    getAuth, signInWithEmailAndPassword, createUserWithEmailAndPassword,
+    signOut, onAuthStateChanged, setPersistence, browserLocalPersistence,
+  } from "https://www.gstatic.com/firebasejs/12.18.0/firebase-auth.js";
+
+  const firebaseConfig = {
+    apiKey: "AIzaSyCs3BRvuJMCCC2-5gznnOCxa0zH68QJarI",
+    authDomain: "ipc-tpk.firebaseapp.com",
+    projectId: "ipc-tpk",
+    storageBucket: "ipc-tpk.firebasestorage.app",
+    messagingSenderId: "68450681592",
+    appId: "1:68450681592:web:d8a67bff6a337e1b1ef10d",
+  };
+
+  const app = initializeApp(firebaseConfig);
+  const db = getFirestore(app);
+  const auth = getAuth(app);
+  try { await setPersistence(auth, browserLocalPersistence); } catch (e) {}
+
+  const KV_COLLECTION = "erct_kv";
+  const PROFILES_COLLECTION = "profiles";
+  const emailFor = (username) => (username.includes("@") ? username : `${username.toLowerCase()}@ipctpk.local`);
+
+  // Real implementation — installed on window.__storageImpl, called via the
+  // synchronous window.storage wrapper defined above.
+  window.__storageImpl = {
     async get(key) {
-      const raw = localStorage.getItem(key);
-      if (raw === null) return null;
-      return { key, value: raw, shared: false };
+      const snap = await getDoc(doc(db, KV_COLLECTION, key));
+      if (!snap.exists()) return null;
+      return { key, value: snap.data().value, shared: true };
     },
     async set(key, value) {
-      localStorage.setItem(key, value);
-      return { key, value, shared: false };
+      await setDoc(doc(db, KV_COLLECTION, key), { value, updatedAt: Date.now() });
+      return { key, value, shared: true };
     },
     async delete(key) {
-      const existed = localStorage.getItem(key) !== null;
-      localStorage.removeItem(key);
-      return { key, deleted: existed, shared: false };
+      const snap = await getDoc(doc(db, KV_COLLECTION, key));
+      const existed = snap.exists();
+      if (existed) await deleteDoc(doc(db, KV_COLLECTION, key));
+      return { key, deleted: existed, shared: true };
     },
     async list(prefix) {
       prefix = prefix || "";
-      const keys = Object.keys(localStorage).filter((k) => k.startsWith(prefix));
-      return { keys, prefix, shared: false };
+      const snaps = await getDocs(collection(db, KV_COLLECTION));
+      const keys = [];
+      snaps.forEach((d) => { if (d.id.startsWith(prefix)) keys.push(d.id); });
+      return { keys, prefix, shared: true };
     },
   };
-  // XLSX is loaded as a UMD global by the SheetJS script above; alias it so
-  // the app code (written against `import * as XLSX from "xlsx"`) works unchanged.
-  window.XLSX = window.XLSX || {};
+
+  window.__authImpl = {
+    async signIn(username, password) {
+      const email = emailFor(username.trim());
+      const cred = await signInWithEmailAndPassword(auth, email, password);
+      const snap = await getDoc(doc(db, PROFILES_COLLECTION, cred.user.uid));
+      if (!snap.exists()) throw new Error("Login berhasil tapi profil pengguna tidak ditemukan di Firestore. Hubungi System Admin.");
+      return { id: cred.user.uid, ...snap.data() };
+    },
+    async signOut() {
+      try { await signOut(auth); } catch (e) {}
+    },
+    restoreSession() {
+      return new Promise((resolve) => {
+        const unsub = onAuthStateChanged(auth, async (user) => {
+          unsub();
+          if (!user) return resolve(null);
+          try {
+            const snap = await getDoc(doc(db, PROFILES_COLLECTION, user.uid));
+            resolve(snap.exists() ? { id: user.uid, ...snap.data() } : null);
+          } catch (e) { resolve(null); }
+        });
+      });
+    },
+    // One-time client-side seeding of demo accounts from the app's Users
+    // master data into real Firebase Auth + Firestore profiles. Safe to
+    // re-run — accounts that already exist are skipped automatically.
+    async seedDemoAccounts(users, onProgress) {
+      let created = 0, skipped = 0, failed = 0;
+      for (const u of users) {
+        if (!u.username || !u.tempPassword) { skipped++; onProgress && onProgress({ created, skipped, failed, total: users.length }); continue; }
+        const email = emailFor(u.username);
+        try {
+          const cred = await createUserWithEmailAndPassword(auth, email, u.tempPassword);
+          await setDoc(doc(db, PROFILES_COLLECTION, cred.user.uid), {
+            name: u.name, username: u.username, role: u.role, areas: u.areas || [],
+          });
+          created++;
+        } catch (err) {
+          skipped++;
+        }
+        onProgress && onProgress({ created, skipped, failed, total: users.length });
+      }
+      try { await signOut(auth); } catch (e) {}
+      return { created, skipped, failed };
+    },
+  };
+
+  window.__firebaseReadyResolve();
 </script>
 
 <script type="text/babel" data-presets="react">
@@ -851,15 +944,25 @@ function App() {
       setShifts(shf);
       setSubAreas(subs);
 
-      // restore a previous login session, if the matching user still exists
-      const savedSession = await loadKey(STORAGE_KEYS.session, null);
-      if (savedSession) {
-        const stillValid = usrs.find((u) => u.id === savedSession.userId);
-        if (stillValid) {
-          setCurrentUser(stillValid);
-          setRole(stillValid.role);
-          setAssignedAreas(stillValid.areas.length ? stillValid.areas : [AREAS[0].code]);
-          setTab(ROLES[stillValid.role].home);
+      // restore a previous login session — via Firebase Auth if wired in, else local session key
+      if (typeof window !== "undefined" && window.firebaseAuth) {
+        const profile = await window.firebaseAuth.restoreSession();
+        if (profile) {
+          setCurrentUser(profile);
+          setRole(profile.role);
+          setAssignedAreas(profile.areas?.length ? profile.areas : [AREAS[0].code]);
+          setTab(ROLES[profile.role].home);
+        }
+      } else {
+        const savedSession = await loadKey(STORAGE_KEYS.session, null);
+        if (savedSession) {
+          const stillValid = usrs.find((u) => u.id === savedSession.userId);
+          if (stillValid) {
+            setCurrentUser(stillValid);
+            setRole(stillValid.role);
+            setAssignedAreas(stillValid.areas.length ? stillValid.areas : [AREAS[0].code]);
+            setTab(ROLES[stillValid.role].home);
+          }
         }
       }
       setAuthChecked(true);
@@ -870,12 +973,15 @@ function App() {
   function handleLogin(user) {
     setCurrentUser(user);
     setRole(user.role);
-    setAssignedAreas(user.areas.length ? user.areas : [AREAS[0].code]);
+    setAssignedAreas((user.areas && user.areas.length) ? user.areas : [AREAS[0].code]);
     setTab(ROLES[user.role].home);
-    saveKey(STORAGE_KEYS.session, { userId: user.id });
+    if (!(typeof window !== "undefined" && window.firebaseAuth)) {
+      saveKey(STORAGE_KEYS.session, { userId: user.id });
+    }
   }
 
   function handleLogout() {
+    if (typeof window !== "undefined" && window.firebaseAuth) window.firebaseAuth.signOut();
     setCurrentUser(null);
     setSessionOpen(false);
     saveKey(STORAGE_KEYS.session, null);
@@ -1124,16 +1230,26 @@ function PrintArea({ data }) {
 
 function ProtoBanner() {
   const [open, setOpen] = useState(false);
+  const hasFirebase = typeof window !== "undefined" && !!window.firebaseAuth;
   return (
-    <div className="print:hidden shrink-0 bg-amber-400/10 border-b border-amber-400/20 text-amber-300 text-[11px] px-3 py-1.5 flex items-center gap-2">
+    <div className={`print:hidden shrink-0 border-b text-[11px] px-3 py-1.5 flex items-center gap-2 ${hasFirebase ? "bg-cyan-500/10 border-cyan-400/20 text-cyan-300" : "bg-amber-400/10 border-amber-400/20 text-amber-300"}`}>
       <InfoIcon size={12} className="shrink-0" />
-      <span className="flex-1">
-        Frontend prototype — role/area access is <strong>simulated in the browser</strong>, not enforced by a real backend.
-        {" "}<button onClick={() => setOpen((o) => !o)} className="underline hover:text-amber-200">{open ? "hide details" : "why this matters"}</button>
-      </span>
+      {hasFirebase ? (
+        <span className="flex-1">
+          Login via <strong>Firebase Authentication</strong>, data tersimpan di <strong>Firestore</strong> — sinkron antar perangkat.
+          {" "}<button onClick={() => setOpen((o) => !o)} className="underline hover:text-cyan-200">{open ? "sembunyikan" : "catatan keamanan"}</button>
+        </span>
+      ) : (
+        <span className="flex-1">
+          Frontend prototype — role/area access is <strong>simulated in the browser</strong>, not enforced by a real backend.
+          {" "}<button onClick={() => setOpen((o) => !o)} className="underline hover:text-amber-200">{open ? "hide details" : "why this matters"}</button>
+        </span>
+      )}
       {open && (
-        <span className="hidden md:inline text-amber-300/80">
-          PRD Section 5 requires server-side authorization per user-area mapping — that needs a real backend/database (e.g. Supabase) before production rollout.
+        <span className="hidden md:inline text-current opacity-80">
+          {hasFirebase
+            ? "Otentikasi & password kini ditangani Firebase Auth (bukan lagi plaintext). Namun equipment/incident/history masih tersimpan sebagai satu dokumen gabungan per jenis data — pembatasan akses per-area untuk data itu masih ditegakkan di aplikasi (client), belum di level Firestore Security Rules per record. Migrasi ke koleksi per-equipment + rules berbasis area diperlukan untuk penegakan penuh sesuai PRD §5."
+            : "PRD Section 5 requires server-side authorization per user-area mapping — that needs a real backend/database before production rollout."}
         </span>
       )}
     </div>
@@ -1154,21 +1270,34 @@ function LoginScreen({ users, onLogin }) {
   const [error, setError] = useState("");
   const [showDemo, setShowDemo] = useState(false);
   const [busy, setBusy] = useState(false);
+  const [seedStatus, setSeedStatus] = useState(null); // { running, created, skipped, total } | { done: true, ... }
+  const hasFirebase = typeof window !== "undefined" && !!window.firebaseAuth;
 
-  function submit(e) {
+  async function submit(e) {
     e.preventDefault();
     setBusy(true);
-    setTimeout(() => {
-      const match = users.find((u) => u.username && u.username.toLowerCase() === username.trim().toLowerCase());
-      if (!match || match.tempPassword !== password) {
-        setError("Username atau password salah.");
-        setBusy(false);
-        return;
+    setError("");
+    try {
+      if (hasFirebase) {
+        const profile = await window.firebaseAuth.signIn(username.trim(), password);
+        onLogin(profile);
+      } else {
+        await new Promise((r) => setTimeout(r, 250));
+        const match = users.find((u) => u.username && u.username.toLowerCase() === username.trim().toLowerCase());
+        if (!match || match.tempPassword !== password) throw new Error("Username atau password salah.");
+        onLogin(match);
       }
-      setError("");
-      setBusy(false);
-      onLogin(match);
-    }, 300);
+    } catch (err) {
+      setError(humanizeAuthError(err));
+    }
+    setBusy(false);
+  }
+
+  async function runSeed() {
+    if (!hasFirebase || !window.firebaseAuth.seedDemoAccounts) return;
+    setSeedStatus({ running: true, created: 0, skipped: 0, total: users.length });
+    const result = await window.firebaseAuth.seedDemoAccounts(users, (p) => setSeedStatus({ running: true, ...p }));
+    setSeedStatus({ running: false, done: true, ...result });
   }
 
   function pickDemo(u) {
@@ -1196,6 +1325,9 @@ function LoginScreen({ users, onLogin }) {
           </div>
           <h1 className="text-xl font-semibold text-slate-50 text-center">Equipment Readiness<br/>Control Tower</h1>
           <p className="text-xs text-slate-500 font-mono mt-1.5">IPC TPK · Multi-Area · PRD v2.1</p>
+          {hasFirebase && (
+            <span className="mt-2 text-[10px] font-mono text-emerald-400 bg-emerald-500/10 ring-1 ring-emerald-500/30 rounded-full px-2 py-0.5">Firebase Auth + Firestore aktif</span>
+          )}
         </div>
 
         <form onSubmit={submit} className="bg-slate-900/70 border border-slate-800 rounded-2xl shadow-2xl shadow-black/40 p-6 space-y-4 backdrop-blur">
@@ -1228,18 +1360,45 @@ function LoginScreen({ users, onLogin }) {
                     <span className="text-[10.5px] font-mono text-slate-500">{u.username}</span>
                   </button>
                 ))}
-                <p className="text-[10px] text-slate-600 leading-snug pt-1">Password sementara ada di Administration → Users. Kredensial demo ini tersimpan lokal di browser, bukan sistem auth produksi.</p>
+                <p className="text-[10px] text-slate-600 leading-snug pt-1">Password sementara ada di Administration → Users. Kredensial demo ini untuk keperluan pilot, bukan sistem auth produksi akhir.</p>
               </div>
             )}
           </div>
         </form>
 
+        {hasFirebase && (
+          <div className="mt-4 bg-slate-900/50 border border-slate-800 rounded-xl p-3.5">
+            <button type="button" onClick={runSeed} disabled={seedStatus?.running}
+              className="w-full text-[11px] text-slate-300 hover:text-slate-100 flex items-center justify-center gap-1.5 disabled:opacity-50">
+              <Settings size={12} /> {seedStatus?.running ? "Membuat akun…" : "Setup akun demo ke Firebase (sekali jalan)"}
+            </button>
+            {seedStatus && (
+              <p className="text-[10px] text-slate-500 text-center mt-1.5">
+                {seedStatus.running
+                  ? `Memproses ${seedStatus.created + seedStatus.skipped}/${seedStatus.total}…`
+                  : `Selesai — ${seedStatus.created} akun dibuat, ${seedStatus.skipped} dilewati (mungkin sudah ada).`}
+              </p>
+            )}
+            <p className="text-[10px] text-slate-600 text-center mt-1 leading-snug">Jalankan sekali saja setelah Firebase pertama kali disambungkan. Aman diklik ulang — akun yang sudah ada otomatis dilewati.</p>
+          </div>
+        )}
+
         <p className="text-[10.5px] text-slate-600 text-center mt-5 leading-snug">
-          Prototype pilot — autentikasi berjalan di browser terhadap User Master lokal, belum tersambung ke backend/SSO sungguhan.
+          {hasFirebase
+            ? "Autentikasi via Firebase Authentication, data tersimpan di Firestore — sinkron real-time antar perangkat."
+            : "Prototype pilot — autentikasi berjalan di browser terhadap User Master lokal, belum tersambung ke backend/SSO sungguhan."}
         </p>
       </div>
     </div>
   );
+}
+
+function humanizeAuthError(err) {
+  const code = err?.code || "";
+  if (code.includes("invalid-credential") || code.includes("wrong-password") || code.includes("user-not-found")) return "Username atau password salah.";
+  if (code.includes("too-many-requests")) return "Terlalu banyak percobaan gagal — coba lagi beberapa saat.";
+  if (code.includes("network")) return "Gagal terhubung ke server. Cek koneksi internet.";
+  return err?.message || "Login gagal.";
 }
 
 function TopBar({ role, now, readiness, needCount, sessionOpen, setSessionOpen, mobileNavOpen, setMobileNavOpen, currentUser, onLogout }) {
