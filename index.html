@@ -31,6 +31,24 @@
   // awaits __firebaseReady, then delegates to the real implementation that
   // the module script below installs on window.__storageImpl / __authImpl.
   window.__firebaseReady = new Promise((resolve) => { window.__firebaseReadyResolve = resolve; });
+
+  // Safety net: if the Firebase module (loaded from Google's CDN) hasn't
+  // finished initializing within 6s — blocked network, ad-blocker, wrong
+  // config, CDN hiccup — fall back to local-only storage/login instead of
+  // leaving the app stuck on the loading screen forever.
+  setTimeout(() => {
+    if (window.__storageImpl) return; // Firebase already initialized in time
+    console.warn("[ERCT] Firebase did not initialize in time — falling back to local storage.");
+    window.__storageImpl = {
+      async get(key) { const raw = localStorage.getItem(key); return raw === null ? null : { key, value: raw, shared: false }; },
+      async set(key, value) { localStorage.setItem(key, value); return { key, value, shared: false }; },
+      async delete(key) { const existed = localStorage.getItem(key) !== null; localStorage.removeItem(key); return { key, deleted: existed, shared: false }; },
+      async list(prefix) { prefix = prefix || ""; const keys = Object.keys(localStorage).filter((k) => k.startsWith(prefix)); return { keys, prefix, shared: false }; },
+    };
+    window.firebaseAuth = null; // app falls back to the local username/password check
+    window.__firebaseReadyResolve();
+  }, 6000);
+
   window.storage = {
     get: async (key) => { await window.__firebaseReady; return window.__storageImpl.get(key); },
     set: async (key, value) => { await window.__firebaseReady; return window.__storageImpl.set(key, value); },
@@ -38,10 +56,10 @@
     list: async (prefix) => { await window.__firebaseReady; return window.__storageImpl.list(prefix); },
   };
   window.firebaseAuth = {
-    signIn: async (u, p) => { await window.__firebaseReady; return window.__authImpl.signIn(u, p); },
-    signOut: async () => { await window.__firebaseReady; return window.__authImpl.signOut(); },
-    restoreSession: async () => { await window.__firebaseReady; return window.__authImpl.restoreSession(); },
-    seedDemoAccounts: async (users, onProgress) => { await window.__firebaseReady; return window.__authImpl.seedDemoAccounts(users, onProgress); },
+    signIn: async (u, p) => { await window.__firebaseReady; if (!window.__authImpl) throw new Error("Firebase tidak tersedia saat ini."); return window.__authImpl.signIn(u, p); },
+    signOut: async () => { await window.__firebaseReady; if (window.__authImpl) return window.__authImpl.signOut(); },
+    restoreSession: async () => { await window.__firebaseReady; return window.__authImpl ? window.__authImpl.restoreSession() : null; },
+    seedDemoAccounts: async (users, onProgress) => { await window.__firebaseReady; if (!window.__authImpl) throw new Error("Firebase tidak tersedia saat ini."); return window.__authImpl.seedDemoAccounts(users, onProgress); },
   };
 </script>
 
@@ -875,6 +893,20 @@ function Modal({ title, onClose, children, wide }) {
 /* Root App                                                                 */
 /* ---------------------------------------------------------------------- */
 
+function LoadingScreen() {
+  const [slow, setSlow] = useState(false);
+  useEffect(() => {
+    const t = setTimeout(() => setSlow(true), 3000);
+    return () => clearTimeout(t);
+  }, []);
+  return (
+    <div className="h-screen w-full flex flex-col items-center justify-center bg-slate-950 text-slate-400 font-mono text-sm gap-2">
+      <div className="flex items-center"><RefreshCw className="animate-spin mr-2" size={16} /> Loading ERCT…</div>
+      {slow && <div className="text-[11px] text-slate-600 max-w-xs text-center">Masih menghubungkan ke server data. Kalau lebih dari beberapa detik lagi, aplikasi akan otomatis lanjut memakai mode lokal.</div>}
+    </div>
+  );
+}
+
 function App() {
   const [loading, setLoading] = useState(true);
   const [equipment, setEquipment] = useState([]);
@@ -1133,9 +1165,7 @@ function App() {
   }
 
   if (loading) {
-    return <div className="h-screen w-full flex items-center justify-center bg-slate-950 text-slate-400 font-mono text-sm">
-      <RefreshCw className="animate-spin mr-2" size={16} /> Loading ERCT — generating 384-equipment baseline…
-    </div>;
+    return <LoadingScreen />;
   }
 
   if (!currentUser) {
