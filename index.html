@@ -208,11 +208,9 @@ const STATUS = {
 
 // Section 5 — User Roles & Access Control
 const ROLES = {
-  AREA_ADMIN: { label: "Area Admin", scoped: true, canEdit: true, canHandover: true, canMaster: false, canAudit: false, home: "home" },
-  AREA_SUPERVISOR: { label: "Area Supervisor", scoped: true, canEdit: true, canHandover: true, canMaster: false, canAudit: false, home: "home" },
-  MANAGEMENT_VIEWER: { label: "Management Viewer", scoped: false, canEdit: false, canHandover: false, canMaster: false, canAudit: false, home: "tower" },
-  SYSTEM_ADMIN: { label: "System Admin", scoped: false, canEdit: true, canHandover: true, canMaster: true, canAudit: true, home: "tower" },
-  SUPER_ADMIN: { label: "Super Admin", scoped: false, canEdit: true, canHandover: true, canMaster: true, canAudit: true, home: "tower" },
+  ADMINISTRATOR: { label: "Administrator", scoped: false, canEdit: true, canHandover: true, canMaster: true, canAudit: true, home: "tower" },
+  MANAGER: { label: "Manager", scoped: false, canEdit: false, canHandover: false, canMaster: false, canAudit: false, home: "tower" },
+  AREA_USER: { label: "Pengguna Area", scoped: true, canEdit: true, canHandover: true, canMaster: false, canAudit: false, home: "home" },
 };
 
 // Section 2 — Source Data Baseline (13 operational areas, 384 equipment)
@@ -236,16 +234,16 @@ const CATEGORY_LIST = ["QCC", "RTGC", "RMGC", "HMC", "CH", "HDT", "TTR", "GJC", 
 const CRITICAL_CATEGORIES = new Set(["QCC", "RTGC", "RMGC", "HMC"]);
 
 const STORAGE_KEYS = {
-  equipment: "erct5:equipment",
-  incidents: "erct5:incidents",
-  history: "erct5:history",
-  handovers: "erct5:handovers",
-  audit: "erct5:audit",
-  categories: "erct5:categories",
-  users: "erct5:users",
-  shifts: "erct5:shifts",
-  subAreas: "erct5:subareas",
-  session: "erct5:session",
+  equipment: "erct6:equipment",
+  incidents: "erct6:incidents",
+  history: "erct6:history",
+  handovers: "erct6:handovers",
+  audit: "erct6:audit",
+  categories: "erct6:categories",
+  users: "erct6:users",
+  shifts: "erct6:shifts",
+  subAreas: "erct6:subareas",
+  session: "erct6:session",
 };
 
 /* ---------------------------------------------------------------------- */
@@ -669,7 +667,7 @@ function seedIncidents(equipment) {
     startTime: hoursAgo(6 + i * 3),
     endTime: null,
     status: "open",
-    updates: [{ timestamp: hoursAgo(1), user: "Area Admin", note: "Investigation in progress" }],
+    updates: [{ timestamp: hoursAgo(1), user: "Pengguna Area", note: "Investigation in progress" }],
   }));
 }
 
@@ -684,35 +682,27 @@ function seedHistory(equipment) {
       from: "READY",
       to: eq.status,
       timestamp: eq.lastUpdate,
-      user: "Area Admin",
+      user: "Pengguna Area",
       remark: eq.remark,
     }));
 }
 
 function seedUsers() {
   const users = [];
-  // "4 admin area" areas each get 4 named admin accounts
-  AREAS.filter((a) => a.adminModel === "4 admin area").forEach((a) => {
-    for (let n = 1; n <= 4; n++) {
-      users.push({
-        id: `U-${a.code}-${n}`,
-        name: `Admin ${a.name} #${n}`,
-        username: `${a.code}_admin${n}`,
-        tempPassword: `Ipctpk#${a.code}${n}26`,
-        mustChangePassword: true,
-        role: "AREA_ADMIN",
-        areas: [a.code],
-      });
-    }
+  // 1 account per operational area — simple, no admin-sharing model to keep track of
+  AREAS.forEach((a) => {
+    users.push({
+      id: `U-${a.code}`,
+      name: `Pengguna ${a.name}`,
+      username: a.code.toLowerCase(),
+      tempPassword: `Ipctpk#${a.code}26`,
+      mustChangePassword: true,
+      role: "AREA_USER",
+      areas: [a.code],
+    });
   });
-  // Shared admin groups per PRD §6 examples: TMS admins also cover MSA; OJA admins also cover TSJ + MAL
-  const SHARED_MAP = { DMSMSA: "DMSTMS", OGTSJ: "OGOJA", OGMAL: "OGOJA" };
-  Object.entries(SHARED_MAP).forEach(([sharedCode, hostCode]) => {
-    users.forEach((u) => { if (u.areas.includes(hostCode) && !u.areas.includes(sharedCode)) u.areas.push(sharedCode); });
-  });
-  // Non-area-scoped roles
-  users.push({ id: "U-SYSADMIN-1", name: "System Administrator", username: "sysadmin", tempPassword: "Ipctpk#SysAdmin26", mustChangePassword: true, role: "SYSTEM_ADMIN", areas: AREAS.map((a) => a.code) });
-  users.push({ id: "U-MGMT-1", name: "Management Viewer", username: "management.viewer", tempPassword: "Ipctpk#Mgmt26", mustChangePassword: true, role: "MANAGEMENT_VIEWER", areas: AREAS.map((a) => a.code) });
+  users.push({ id: "U-ADMIN-1", name: "Administrator", username: "admin", tempPassword: "Ipctpk#Admin26", mustChangePassword: true, role: "ADMINISTRATOR", areas: AREAS.map((a) => a.code) });
+  users.push({ id: "U-MANAGER-1", name: "Manager", username: "manager", tempPassword: "Ipctpk#Manager26", mustChangePassword: true, role: "MANAGER", areas: AREAS.map((a) => a.code) });
   return users;
 }
 
@@ -898,7 +888,7 @@ function App() {
   const [subAreas, setSubAreas] = useState([]);
 
   // --- simulated session (no real backend/auth — see banner) ---
-  const [role, setRole] = useState("AREA_ADMIN");
+  const [role, setRole] = useState("AREA_USER");
   const [assignedAreas, setAssignedAreas] = useState(["PNJ"]);
   const [tab, setTab] = useState(ROLES.AREA_ADMIN.home);
   const [now, setNow] = useState(Date.now());
@@ -1308,9 +1298,9 @@ function LoginScreen({ users, onLogin }) {
   }
 
   const demoGroups = [
-    ["System Admin", users.find((u) => u.role === "SYSTEM_ADMIN")],
-    ["Management", users.find((u) => u.role === "MANAGEMENT_VIEWER")],
-    ["Area Admin (contoh)", users.find((u) => u.role === "AREA_ADMIN")],
+    ["Administrator", users.find((u) => u.role === "ADMINISTRATOR")],
+    ["Manager", users.find((u) => u.role === "MANAGER")],
+    ["Pengguna Area (contoh)", users.find((u) => u.role === "AREA_USER")],
   ].filter(([, u]) => u);
 
   return (
@@ -2114,7 +2104,7 @@ function genTempPassword(username) {
 function AdminTab({ categories, users, shifts, subAreas, onAddCategory, onAddUser, onAddSubArea, onImportEquipment, areaMatrix }) {
   const [sub, setSub] = useState("areas");
   const [newCat, setNewCat] = useState("");
-  const [userForm, setUserForm] = useState({ name: "", username: "", role: "AREA_ADMIN", areas: [] });
+  const [userForm, setUserForm] = useState({ name: "", username: "", role: "AREA_USER", areas: [] });
   const [revealed, setRevealed] = useState({});
   const [subAreaForm, setSubAreaForm] = useState({ areaCode: AREAS[0].code, name: "" });
   const [importResult, setImportResult] = useState(null);
@@ -2192,7 +2182,7 @@ function AdminTab({ categories, users, shifts, subAreas, onAddCategory, onAddUse
               ))}
             </div>
             <button disabled={!userForm.name.trim() || !userForm.username.trim()}
-              onClick={() => { onAddUser({ ...userForm, tempPassword: genTempPassword(userForm.username), mustChangePassword: true }); setUserForm({ name: "", username: "", role: "AREA_ADMIN", areas: [] }); }}
+              onClick={() => { onAddUser({ ...userForm, tempPassword: genTempPassword(userForm.username), mustChangePassword: true }); setUserForm({ name: "", username: "", role: "AREA_USER", areas: [] }); }}
               className="bg-cyan-500 hover:bg-cyan-400 disabled:opacity-40 text-slate-950 font-medium rounded-md px-3 py-1.5 text-xs">Create User (auto-generates temp password)</button>
           </div>
           <div className="rounded-xl border border-slate-800 overflow-hidden">
